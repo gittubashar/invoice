@@ -1,0 +1,9 @@
+/storage/*.sqlite
+/storage/*.sqlite-wal
+/storage/*.sqlite-shm
+/storage/sessions/
+/storage/smtp.key
+/storage/mpdf/
+/vendor/
+/assets/uploads/*
+!/assets/uploads/.htaccess
