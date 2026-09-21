@@ -304,6 +304,25 @@ function normalize_phone(string $phone): string
     return $digits;
 }
 
+function search_clients(string $term, int $limit = 8): array
+{
+    $term = trim($term);
+    $digits = preg_replace('/\D+/', '', $term);
+    if (str_starts_with($digits, '880')) $digits = '0' . substr($digits, 3);
+    $emailTerm = mb_strtolower($term);
+    if (strlen($digits) < 3 && mb_strlen($emailTerm) < 2) return [];
+    $phoneLike = $digits !== '' ? '%' . $digits . '%' : '__no_phone_match__';
+    $emailLike = '%' . $emailTerm . '%';
+    return query_all(
+        'SELECT id, name, company_name, phone, COALESCE(email, \'\') email
+         FROM clients
+         WHERE phone LIKE ? OR lower(COALESCE(email, \'\')) LIKE ?
+         ORDER BY CASE WHEN phone = ? OR lower(COALESCE(email, \'\')) = ? THEN 0 ELSE 1 END, name
+         LIMIT ' . max(1, min(20, $limit)),
+        [$phoneLike, $emailLike, $digits, $emailTerm]
+    );
+}
+
 function valid_date(string $date): string
 {
     $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date);

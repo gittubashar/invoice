@@ -49,6 +49,10 @@ try {
     $first = create_invoice($base + ['invoice_type' => 'one_time']);
     $second = create_invoice(array_replace($base, ['client_name' => 'Ignored duplicate', 'client_phone' => '01712345678', 'company_name' => 'Renamed Ltd', 'invoice_type' => 'recurring', 'frequency' => 'monthly', 'issue_date' => add_days(date('Y-m-d'), -62), 'due_date' => add_days(date('Y-m-d'), -55)]));
     expect((int)query_one('SELECT COUNT(*) total FROM clients')['total'] === 1, 'Phone must reuse client');
+    $phoneMatches = search_clients('017123');
+    $emailMatches = search_clients('test@example');
+    expect(count($phoneMatches) === 1 && $phoneMatches[0]['name'] === 'Test Client', 'Client live search must match a partial phone number');
+    expect(count($emailMatches) === 1 && $emailMatches[0]['phone'] === '01712345678', 'Client live search must match a partial email address');
     expect(query_one('SELECT billing_name FROM invoices WHERE id=?', [$first])['billing_name'] === 'Test Client', 'Invoice must snapshot billing name');
     expect(query_one('SELECT company_name FROM clients LIMIT 1')['company_name'] === 'Renamed Ltd', 'Client company must update when explicitly provided');
     expect(query_one('SELECT billing_company_name FROM invoices WHERE id=?', [$first])['billing_company_name'] === 'Example Ltd', 'Old invoice company snapshot must remain unchanged');
@@ -116,10 +120,11 @@ try {
     expect(!str_contains($printHtml, 'company-logo') && !str_contains($printHtml, 'company-mark'), 'Print view must omit logo space when no logo is uploaded');
     $pdo->prepare('INSERT INTO payment_methods (type, name, qr_path) VALUES (?,?,?)')->execute(['bank', 'Example Bank', '']);
     $pdo->prepare('INSERT INTO payment_methods (type, name, qr_path) VALUES (?,?,?)')->execute(['mfs', 'Example Wallet', $qrPath]);
+    $pdo->prepare('INSERT INTO payment_methods (type, name, account_number, qr_path) VALUES (?,?,?,?)')->execute(['bank', 'Second Bank', '987654321', '']);
     $unassignedInvoice = $printInvoice;
     $unassignedInvoice['payment_method_id'] = null;
     $availableMethods = invoice_payment_methods($unassignedInvoice);
-    expect(count($availableMethods) === 2, 'Unassigned invoices must show all active payment methods');
+    expect(count($availableMethods) === 3, 'Unassigned invoices must show all active payment methods');
     ob_start();
     render_invoice_print($unassignedInvoice, $printItems, $availableMethods);
     $fallbackPrintHtml = (string)ob_get_clean();
@@ -127,7 +132,7 @@ try {
     $pdf = render_invoice_pdf($unassignedInvoice, $printItems, $availableMethods);
     expect(str_starts_with($pdf, '%PDF-') && str_contains($pdf, '%%EOF') && strlen($pdf) > 10000, 'Download must be a complete PDF file');
     $pageCount = (new \Mpdf\Mpdf(['tempDir' => dirname(__DIR__) . '/storage/mpdf']))->setSourceFile(\setasign\Fpdi\PdfParser\StreamReader::createByString($pdf));
-    expect($pageCount >= 1, 'Downloaded PDF must contain a readable page');
+    expect($pageCount === 1, 'PDF with three payment methods must fit on one A4 page');
     $changedHash = password_hash('new-local-password', PASSWORD_DEFAULT);
     $pdo->prepare('UPDATE admins SET password_hash=? WHERE email=?')->execute([$changedHash, DEFAULT_SUPER_ADMIN_EMAIL]);
     $pdo = null;
@@ -135,7 +140,7 @@ try {
     db();
     expect(query_one('SELECT password_hash FROM admins WHERE email=?', [DEFAULT_SUPER_ADMIN_EMAIL])['password_hash'] === $changedHash, 'One-time seed must preserve later password changes');
     expect(setting('site_title') === 'Test Billing' && setting('smtp_host') === 'smtp.example.test', 'Settings must survive database reopen');
-    echo "Smoke test passed: invoice edits, payment methods, downloadable PDF, settings persistence, collection, recurring generation.\n";
+    echo "Smoke test passed: invoice edits, payment methods, one-page inline PDF, settings persistence, collection, recurring generation.\n";
 } finally {
     $pdo = null;
     close_db();

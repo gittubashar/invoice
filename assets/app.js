@@ -43,8 +43,151 @@
     window.addEventListener('beforeunload', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); });
   });
 
+  const paymentLayout = document.querySelector('.payment-method-layout');
+  const paymentResizer = paymentLayout?.querySelector('[data-payment-resizer]');
+  if (paymentLayout && paymentResizer) {
+    const desktop = window.matchMedia('(min-width: 1281px)');
+    let ratio = Math.min(.72, Math.max(.4, Number(localStorage.getItem('paymentColumnRatio')) || .57));
+    const applyPaymentColumns = () => {
+      if (!desktop.matches) {
+        paymentLayout.style.removeProperty('grid-template-columns');
+        return;
+      }
+      const available = paymentLayout.clientWidth - 32;
+      const minLeft = Math.min(360, available * .5);
+      const minRight = Math.min(320, available * .45);
+      const left = Math.max(minLeft, Math.min(available - minRight, available * ratio));
+      paymentLayout.style.gridTemplateColumns = `${left}px 12px minmax(320px, 1fr)`;
+    };
+    const setRatioFromPointer = clientX => {
+      const rect = paymentLayout.getBoundingClientRect();
+      const available = rect.width - 32;
+      ratio = Math.min(.72, Math.max(.4, (clientX - rect.left) / available));
+      applyPaymentColumns();
+    };
+    paymentResizer.addEventListener('pointerdown', event => {
+      if (!desktop.matches) return;
+      paymentResizer.setPointerCapture(event.pointerId);
+      paymentLayout.classList.add('is-resizing');
+      setRatioFromPointer(event.clientX);
+    });
+    paymentResizer.addEventListener('pointermove', event => {
+      if (!paymentResizer.hasPointerCapture(event.pointerId)) return;
+      setRatioFromPointer(event.clientX);
+    });
+    const finishResize = event => {
+      if (paymentResizer.hasPointerCapture(event.pointerId)) paymentResizer.releasePointerCapture(event.pointerId);
+      paymentLayout.classList.remove('is-resizing');
+      localStorage.setItem('paymentColumnRatio', ratio.toFixed(3));
+    };
+    paymentResizer.addEventListener('pointerup', finishResize);
+    paymentResizer.addEventListener('pointercancel', finishResize);
+    paymentResizer.addEventListener('keydown', event => {
+      if (!desktop.matches || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === 'Home') ratio = .4;
+      else if (event.key === 'End') ratio = .72;
+      else ratio = Math.min(.72, Math.max(.4, ratio + (event.key === 'ArrowRight' ? .03 : -.03)));
+      localStorage.setItem('paymentColumnRatio', ratio.toFixed(3));
+      applyPaymentColumns();
+    });
+    window.addEventListener('resize', applyPaymentColumns);
+    applyPaymentColumns();
+  }
+
   const form = document.getElementById('invoice-form');
   if (!form) return;
+
+  const clientLookupInputs = [...form.querySelectorAll('[data-client-lookup]')];
+  const clientResults = form.querySelector('[data-client-results]');
+  const clientMatch = form.querySelector('[data-client-match]');
+  const matchedClientId = form.elements.matched_client_id;
+  if (clientLookupInputs.length && clientResults && clientMatch && form.dataset.clientSearchUrl) {
+    let searchTimer = 0;
+    let searchController;
+    const normalizePhone = value => {
+      let digits = value.replace(/\D/g, '');
+      if (digits.startsWith('880')) digits = `0${digits.slice(3)}`;
+      return digits;
+    };
+    const hideResults = () => {
+      clientResults.hidden = true;
+      clientResults.replaceChildren();
+    };
+    const selectClient = client => {
+      form.elements.client_phone.value = client.phone || '';
+      form.elements.client_email.value = client.email || '';
+      form.elements.client_name.value = client.name || '';
+      form.elements.company_name.value = client.company_name || '';
+      matchedClientId.value = client.id || '';
+      clientMatch.textContent = `বিদ্যমান ক্লায়েন্ট পাওয়া গেছে: ${client.name}${client.company_name ? ` · ${client.company_name}` : ''}`;
+      clientMatch.hidden = false;
+      hideResults();
+    };
+    const renderClients = (clients, source, query) => {
+      hideResults();
+      const normalizedQuery = source.name === 'client_phone' ? normalizePhone(query) : query.trim().toLowerCase();
+      const exact = clients.find(client => source.name === 'client_phone'
+        ? normalizePhone(client.phone || '') === normalizedQuery
+        : (client.email || '').trim().toLowerCase() === normalizedQuery);
+      if (exact) {
+        selectClient(exact);
+        return;
+      }
+      if (!clients.length) {
+        const empty = document.createElement('div');
+        empty.className = 'client-search-empty';
+        empty.textContent = 'কোনো বিদ্যমান ক্লায়েন্ট পাওয়া যায়নি। এই তথ্য দিয়ে নতুন ক্লায়েন্ট তৈরি হবে।';
+        clientResults.append(empty);
+      } else {
+        clients.forEach(client => {
+          const option = document.createElement('button');
+          option.type = 'button';
+          option.className = 'client-search-option';
+          const identity = document.createElement('span');
+          const name = document.createElement('strong');
+          const company = document.createElement('small');
+          name.textContent = client.name;
+          company.textContent = client.company_name || 'কোম্পানির নাম নেই';
+          identity.append(name, company);
+          const contact = document.createElement('span');
+          contact.className = 'client-search-contact';
+          contact.textContent = `${client.phone}${client.email ? ` · ${client.email}` : ''}`;
+          option.append(identity, contact);
+          option.addEventListener('click', () => selectClient(client));
+          clientResults.append(option);
+        });
+      }
+      clientResults.hidden = false;
+    };
+    clientLookupInputs.forEach(input => input.addEventListener('input', () => {
+      matchedClientId.value = '';
+      clientMatch.hidden = true;
+      const query = input.value.trim();
+      const searchable = input.name === 'client_phone' ? normalizePhone(query).length >= 3 : query.length >= 2;
+      clearTimeout(searchTimer);
+      searchController?.abort();
+      if (!searchable) {
+        hideResults();
+        return;
+      }
+      searchTimer = window.setTimeout(async () => {
+        searchController = new AbortController();
+        const endpoint = new URL(form.dataset.clientSearchUrl, window.location.href);
+        endpoint.searchParams.set('q', query);
+        try {
+          const response = await fetch(endpoint, { headers: { Accept: 'application/json' }, signal: searchController.signal });
+          if (!response.ok) throw new Error('Client search failed');
+          renderClients(await response.json(), input, query);
+        } catch (error) {
+          if (error.name !== 'AbortError') hideResults();
+        }
+      }, 220);
+    }));
+    document.addEventListener('click', event => {
+      if (!event.target.closest('.client-fields')) hideResults();
+    });
+  }
 
   const itemContainer = document.getElementById('invoice-items');
   const template = document.getElementById('item-template');

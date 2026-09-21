@@ -28,7 +28,7 @@ session_id($sessionId);
 session_start();
 $_SESSION['admin_id'] = 1;
 $_SERVER['REQUEST_METHOD'] = 'GET';
-$_GET = ['page' => 'download', 'id' => $id];
+$_GET = ['page' => 'pdf', 'id' => $id];
 
 ob_start();
 register_shutdown_function(static function () use ($path, $sessionId): void {
@@ -41,6 +41,6 @@ register_shutdown_function(static function () use ($path, $sessionId): void {
     if (!str_starts_with($body, '%PDF-') || !str_contains($body, '%%EOF')) {
         throw new RuntimeException('Download route did not return a PDF');
     }
-    echo "Download route passed: PDF bytes returned.\n";
+    echo "Inline PDF route passed: PDF bytes returned.\n";
 });
 require dirname(__DIR__) . '/index.php';
