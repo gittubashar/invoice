@@ -24,7 +24,7 @@ table{border-collapse:collapse;width:100%}
 .brand-logo{max-width:19mm;max-height:19mm}
 .brand-title{font-size:19pt;font-weight:bold;color:#183e73;line-height:1.1}
 .brand-slogan{font-size:8pt;color:#315a81}
-.contact{margin-top:2mm;font-size:7.5pt;line-height:1.45;color:#31516e}.contact-icon{display:inline-block;width:3.8mm;font-family:dejavusans;font-size:7pt;color:#0d6a9f}
+.contact{margin-top:2mm;font-size:7.5pt;line-height:1.45;color:#31516e}.contact-row{white-space:nowrap}.contact-item{display:inline-block;margin-right:4mm}.contact-icon{display:inline-block;width:3.8mm;font-family:dejavusans;font-size:7pt;color:#0d6a9f}
 .invoice-box{background:#eaf6fc;border-radius:2mm;padding:3mm}
 .invoice-box h1{font-size:16pt;color:#154575;text-align:center;border-bottom:1px solid #3e8abd;padding-bottom:1mm;margin-bottom:1mm}
 .facts td{padding:.5mm 0;font-size:8pt}.facts .label{width:32%}.facts .colon{width:5%}
@@ -61,8 +61,10 @@ table{border-collapse:collapse;width:100%}
         </tr></table>
         <div class="contact">
             <?php if ($address !== ''): ?><?= nl2br(e($address)) ?><br><?php endif; ?>
-            <?php if ($mobile !== ''): ?><span class="contact-icon">&#9742;</span><?= e($mobile) ?><br><?php endif; ?>
-            <?php if ($email !== ''): ?><span class="contact-icon">&#9993;</span><?= e($email) ?><br><?php endif; ?>
+            <?php if ($mobile !== '' || $email !== ''): ?><div class="contact-row">
+                <?php if ($mobile !== ''): ?><span class="contact-item"><span class="contact-icon">&#9742;</span><?= e($mobile) ?></span><?php endif; ?>
+                <?php if ($email !== ''): ?><span class="contact-item"><span class="contact-icon">&#9993;</span><?= e($email) ?></span><?php endif; ?>
+            </div><?php endif; ?>
             <?php if ($website !== ''): ?><?= e($website) ?><?php endif; ?>
         </div>
     </td>
