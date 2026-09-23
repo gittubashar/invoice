@@ -99,6 +99,12 @@ try {
         throw new RuntimeException('Inactive method should be rejected for new invoices');
     } catch (InvalidArgumentException $expected) {}
     expect((int)query_one('SELECT COUNT(*) total FROM clients')['total'] === 2, 'Changed phone must link a new client account');
+    $manualClientId = create_client_account(['client_name' => 'Manual Client', 'company_name' => 'Manual Co', 'client_phone' => '01812345678', 'client_email' => 'manual@example.test']);
+    expect((int)query_one('SELECT COUNT(*) total FROM clients WHERE id=? AND company_name=?', [$manualClientId, 'Manual Co'])['total'] === 1, 'Client page must create a standalone client account');
+    try {
+        create_client_account(['client_name' => 'Duplicate Client', 'client_phone' => '01812345678', 'client_email' => 'other@example.test']);
+        throw new RuntimeException('Duplicate client phone should be rejected');
+    } catch (InvalidArgumentException $expected) {}
     collect_payment($first, '100', 'cash', '', '', date('Y-m-d'));
     expect(invoice_status(invoice_rows('WHERE i.id=?', [$first])[0]) === 'paid', 'Edited invoice can be fully collected');
     $recurringInvoice = query_one('SELECT issue_date, due_date, recurrence_id FROM invoices WHERE id=?', [$second]);

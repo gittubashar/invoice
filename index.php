@@ -145,6 +145,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('success', 'পেমেন্ট মেথডের অবস্থা পরিবর্তন হয়েছে।');
             redirect('payment-methods');
         }
+        if ($action === 'save_client') {
+            $id = create_client_account($_POST);
+            flash('success', 'নতুন ক্লায়েন্ট সংরক্ষণ করা হয়েছে।');
+            redirect('client', ['id' => $id]);
+        }
         if ($action === 'create_invoice') {
             $id = create_invoice($_POST);
             flash('success', 'ইনভয়েস তৈরি এবং সংরক্ষণ করা হয়েছে।');
@@ -206,6 +211,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'save_basic_settings') redirect('settings', ['tab' => 'basic']);
         if ($action === 'save_smtp_settings') redirect('settings', ['tab' => 'smtp']);
         if ($action === 'save_payment_method' || $action === 'toggle_payment_method') redirect('payment-methods', ['edit' => (int)($_POST['method_id'] ?? 0)]);
+        if ($action === 'save_client') {
+            $_SESSION['old_client'] = $_POST;
+            redirect('clients', ['add' => 1]);
+        }
         redirect('dashboard');
     }
 }
@@ -538,9 +547,12 @@ case 'services':
 
 case 'clients':
     $search = trim((string)($_GET['q'] ?? ''));
-    $clients = query_all('SELECT c.*, COUNT(DISTINCT i.id) invoice_count, COALESCE(SUM(i.total_cents),0) billed FROM clients c LEFT JOIN invoices i ON i.client_id = c.id ' . ($search ? 'WHERE c.name LIKE ? OR c.company_name LIKE ? OR c.phone LIKE ? ' : '') . 'GROUP BY c.id ORDER BY c.id DESC LIMIT 500', $search ? ['%' . $search . '%', '%' . $search . '%', '%' . $search . '%'] : []);
+    $oldClient = $_SESSION['old_client'] ?? []; unset($_SESSION['old_client']);
+    $showAddClient = isset($_GET['add']) || $oldClient !== [];
+    $clients = query_all('SELECT c.*, COUNT(DISTINCT i.id) invoice_count, COALESCE(SUM(i.total_cents),0) billed FROM clients c LEFT JOIN invoices i ON i.client_id = c.id ' . ($search ? 'WHERE c.name LIKE ? OR c.company_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? ' : '') . 'GROUP BY c.id ORDER BY c.id DESC LIMIT 500', $search ? ['%' . $search . '%', '%' . $search . '%', '%' . $search . '%', '%' . $search . '%'] : []);
     begin_page('ক্লায়েন্ট', $page, 'মোবাইল নম্বরের বিপরীতে তৈরি ক্লায়েন্ট অ্যাকাউন্ট।');
-    echo '<section class="panel"><div class="toolbar"><form method="get" class="search-form"><input type="hidden" name="page" value="clients">' . icon('search', 18) . '<input name="q" value="' . e($search) . '" placeholder="নাম, কোম্পানি বা মোবাইল খুঁজুন"><button type="submit">খুঁজুন</button></form><span class="count-pill">' . count($clients) . ' জন ক্লায়েন্ট</span></div>';
+    if ($showAddClient) echo '<section class="panel form-panel client-create-panel"><div class="client-create-heading"><div><span class="eyebrow">NEW CLIENT</span><h2>নতুন ক্লায়েন্ট যোগ করুন</h2><p>এই ক্লায়েন্টকে পরে ইনভয়েসের সঙ্গে যুক্ত করা যাবে।</p></div><a class="btn btn-outline btn-sm" href="' . e(url('clients')) . '">বন্ধ করুন</a></div><form method="post">' . csrf_field() . '<input type="hidden" name="action" value="save_client"><div class="form-grid"><label>মোবাইল নম্বর <span>*</span><input name="client_phone" inputmode="tel" required value="' . e($oldClient['client_phone'] ?? '') . '" placeholder="01XXXXXXXXX"></label><label>ইমেইল <small>(ঐচ্ছিক)</small><input type="email" name="client_email" maxlength="190" value="' . e($oldClient['client_email'] ?? '') . '" placeholder="client@example.com"></label><label>ক্লায়েন্টের নাম <span>*</span><input name="client_name" maxlength="150" required value="' . e($oldClient['client_name'] ?? '') . '" placeholder="পূর্ণ নাম"></label><label>Company Name <small>(ঐচ্ছিক)</small><input name="company_name" maxlength="150" value="' . e($oldClient['company_name'] ?? '') . '" placeholder="কোম্পানির নাম"></label></div><div class="client-create-actions"><button class="btn btn-primary" type="submit">' . icon('plus', 17) . ' ক্লায়েন্ট যোগ করুন</button></div></form></section>';
+    echo '<section class="panel"><div class="toolbar"><form method="get" class="search-form"><input type="hidden" name="page" value="clients">' . icon('search', 18) . '<input name="q" value="' . e($search) . '" placeholder="নাম, কোম্পানি, মোবাইল বা ইমেইল খুঁজুন"><button type="submit">খুঁজুন</button></form><div class="client-toolbar-actions"><span class="count-pill">' . count($clients) . ' জন ক্লায়েন্ট</span><a class="btn btn-primary btn-sm" href="' . e(url('clients', ['add' => 1])) . '">' . icon('plus', 16) . ' নতুন ক্লায়েন্ট</a></div></div>';
     if (!$clients) echo '<div class="empty-state">' . icon('users', 34) . '<h3>কোনো ক্লায়েন্ট নেই</h3><p>ইনভয়েস তৈরি করলে ক্লায়েন্ট অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে তৈরি হবে।</p></div>';
     else { echo '<div class="table-wrap"><table><thead><tr><th>ক্লায়েন্ট</th><th>Company Name</th><th>মোবাইল</th><th>ইমেইল</th><th>ইনভয়েস</th><th>মোট বিল</th><th></th></tr></thead><tbody>'; foreach ($clients as $client) echo '<tr><td><a class="strong-link" href="' . e(url('client', ['id' => $client['id']])) . '">' . e($client['name']) . '</a><small>অ্যাকাউন্ট #' . (int)$client['id'] . '</small></td><td>' . e($client['company_name'] ?: '—') . '</td><td>' . e($client['phone']) . '</td><td>' . e($client['email'] ?: '—') . '</td><td>' . (int)$client['invoice_count'] . '</td><td><strong>' . format_money((int)$client['billed']) . '</strong></td><td><a class="row-arrow" href="' . e(url('client', ['id' => $client['id']])) . '">' . icon('chevron', 18) . '</a></td></tr>'; echo '</tbody></table></div>'; }
     echo '</section>'; end_page(); break;

@@ -604,6 +604,23 @@ function get_or_create_client(PDO $pdo, string $name, string $phone, string $ema
     return (int)$pdo->lastInsertId();
 }
 
+function create_client_account(array $input): int
+{
+    $name = trim((string)($input['client_name'] ?? ''));
+    $companyName = trim((string)($input['company_name'] ?? ''));
+    $phone = normalize_phone((string)($input['client_phone'] ?? ''));
+    $email = mb_strtolower(trim((string)($input['client_email'] ?? '')));
+    if ($name === '' || mb_strlen($name) > 150) throw new InvalidArgumentException('ক্লায়েন্টের নাম ১৫০ অক্ষরের মধ্যে লিখুন।');
+    if (mb_strlen($companyName) > 150) throw new InvalidArgumentException('কোম্পানির নাম ১৫০ অক্ষরের মধ্যে লিখুন।');
+    if ($email !== '' && (!filter_var($email, FILTER_VALIDATE_EMAIL) || mb_strlen($email) > 190)) throw new InvalidArgumentException('সঠিক ইমেইল লিখুন।');
+    if (query_one('SELECT id FROM clients WHERE phone = ?', [$phone])) throw new InvalidArgumentException('এই মোবাইল নম্বরে ইতোমধ্যে একটি ক্লায়েন্ট আছে।');
+    if ($email !== '' && query_one("SELECT id FROM clients WHERE lower(COALESCE(email, '')) = ?", [$email])) throw new InvalidArgumentException('এই ইমেইলে ইতোমধ্যে একটি ক্লায়েন্ট আছে।');
+    $pdo = db();
+    $stmt = $pdo->prepare('INSERT INTO clients (name, company_name, phone, email) VALUES (?, ?, ?, ?)');
+    $stmt->execute([$name, $companyName, $phone, $email !== '' ? $email : null]);
+    return (int)$pdo->lastInsertId();
+}
+
 function parse_items(array $input, bool $allowInactiveServices = false): array
 {
     $services = array_column(query_all('SELECT * FROM services' . ($allowInactiveServices ? '' : ' WHERE active = 1')), null, 'id');
