@@ -40,9 +40,13 @@ PHP built-in server দিয়ে চালাতে:
 
 ইনভয়েস বিস্তারিত পেজের **এডিট করুন** বোতাম থেকে বিলিং ক্লায়েন্ট, তারিখ, সার্ভিস/আইটেম, পরিমাণ, দর ও নোট বদলানো যায়। ইনভয়েস নম্বর ও আগের পেমেন্ট অক্ষত থাকে। নতুন মোট আগে কালেকশন করা টাকার কম হলে পরিবর্তন সেভ হয় না। Recurring ইনভয়েস এডিট করলে শুধু সেই ইনভয়েস বদলায়; পরবর্তী schedule বদলায় না।
 
+## ইনভয়েস কালেকশন
+
+সাইডবারের **ইনভয়েস কালেকশন** থেকে সব বকেয়া ও আংশিক পরিশোধিত invoice দেখা যায়। Invoice নির্বাচন করে Partial Collection অথবা সম্পূর্ণ বকেয়ার Full Paid Collection নেওয়া যায়। বকেয়ার বেশি collection গ্রহণ করা হয় না এবং একই পেজে সাম্প্রতিক collection history দেখা যায়।
+
 ## Dashboard Settings
 
-সাইডবারের **Dashboard Settings**-এ Basic Settings ও SMTP ট্যাব আছে। Basic Settings-এর Site Title সাইডবার, লগইন ও ইনভয়েসে; Slogan সাইডবার ও লগইনে; Mobile Number এবং Email ইনভয়েসের যোগাযোগ অংশে দেখানো হয়। SMTP সেটিংস সংরক্ষিত হয়, তবে ইমেইল পাঠানোর ফিচার এখনো যুক্ত হয়নি। SMTP পাসওয়ার্ড এনক্রিপ্ট করার key `storage/smtp.key`-তে থাকে; ডেটাবেসের সঙ্গে এই ফাইলটিও নিরাপদে backup রাখতে হবে।
+সাইডবারের **ড্যাশবোর্ড সেটিংস**-এ Basic Settings ও SMTP ট্যাব আছে। Basic Settings-এর Site Title সাইডবার, লগইন ও ইনভয়েসে; Slogan সাইডবার ও লগইনে; Mobile Number এবং Email ইনভয়েসের যোগাযোগ অংশে দেখানো হয়। SMTP Host, Port, Encryption, Username, Password, From Name ও From Email সেভ করলে নতুন এবং recurring invoice তৈরির পর client-কে PDF attachment-সহ email পাঠানো হয়। ব্যর্থ delivery database queue-তে থাকে এবং `cron.php` সর্বোচ্চ তিনবার retry করে। SMTP পাসওয়ার্ড এনক্রিপ্ট করার key `storage/smtp.key`-তে থাকে; ডেটাবেসের সঙ্গে এই ফাইলটিও নিরাপদে backup রাখতে হবে।
 
 Basic Settings থেকে Logo (PNG, JPG, WebP; সর্বোচ্চ ৩ MB) এবং Favicon (PNG, WebP, ICO; সর্বোচ্চ ১ MB) আপলোড করা যায়। ফাইল বাছার সঙ্গে সঙ্গে preview দেখা যায়; সেভ করার পর ছবি `assets/uploads/`-এ থাকে। Logo সাইডবার, লগইন ও ইনভয়েসে এবং Favicon ব্রাউজার ট্যাবে দেখা যায়। ইনভয়েসের জন্য অফিসের ঠিকানা ও Website-ও এখানে দেয়া যায়। Backup-এ `assets/uploads/` ফোল্ডারও রাখতে হবে।
 

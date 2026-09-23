@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     company_name TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
     phone TEXT NOT NULL UNIQUE,
     email TEXT,
     password_hash TEXT,
@@ -187,11 +188,24 @@ CREATE TABLE IF NOT EXISTS payments (
     paid_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS email_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL UNIQUE REFERENCES invoices(id) ON DELETE CASCADE,
+    recipient TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed','skipped')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
+    next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_due ON invoices(due_date);
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_recurrences_next ON recurrences(status, next_issue_date);
 CREATE INDEX IF NOT EXISTS idx_payment_methods_active ON payment_methods(active, name);
+CREATE INDEX IF NOT EXISTS idx_email_deliveries_queue ON email_deliveries(status, next_attempt_at);
 SQL);
 
     // Add fields introduced after the first release without replacing saved records.
@@ -202,6 +216,9 @@ SQL);
     $clientColumns = array_column($pdo->query('PRAGMA table_info(clients)')->fetchAll(), 'name');
     if (!in_array('company_name', $clientColumns, true)) {
         $pdo->exec("ALTER TABLE clients ADD COLUMN company_name TEXT NOT NULL DEFAULT ''");
+    }
+    if (!in_array('address', $clientColumns, true)) {
+        $pdo->exec("ALTER TABLE clients ADD COLUMN address TEXT NOT NULL DEFAULT ''");
     }
     $invoiceColumns = array_column($pdo->query('PRAGMA table_info(invoices)')->fetchAll(), 'name');
     $recurrenceColumns = array_column($pdo->query('PRAGMA table_info(recurrences)')->fetchAll(), 'name');
@@ -277,6 +294,7 @@ function migrate_mysql(PDO $pdo): void
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(150) NOT NULL,
             company_name VARCHAR(150) NOT NULL DEFAULT '',
+            address VARCHAR(300) NOT NULL DEFAULT '',
             phone VARCHAR(30) NOT NULL UNIQUE,
             email VARCHAR(190) NULL,
             password_hash VARCHAR(255) NULL,
@@ -372,8 +390,28 @@ function migrate_mysql(PDO $pdo): void
             CONSTRAINT chk_payments_amount CHECK (amount_cents > 0),
             KEY idx_payments_invoice (invoice_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS email_deliveries (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            invoice_id BIGINT UNSIGNED NOT NULL UNIQUE,
+            recipient VARCHAR(190) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            last_error VARCHAR(1000) NOT NULL DEFAULT '',
+            next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sent_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_email_deliveries_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+            CONSTRAINT chk_email_deliveries_status CHECK (status IN ('pending','sending','sent','failed','skipped')),
+            KEY idx_email_deliveries_queue (status, next_attempt_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
     foreach ($statements as $statement) $pdo->exec($statement);
+
+    $clientColumns = array_column($pdo->query('SHOW COLUMNS FROM clients')->fetchAll(), 'Field');
+    if (!in_array('address', $clientColumns, true)) {
+        $pdo->exec("ALTER TABLE clients ADD COLUMN address VARCHAR(300) NOT NULL DEFAULT '' AFTER company_name");
+    }
 
     $seeded = $pdo->query("SELECT value FROM app_meta WHERE `key` = 'super_admin_seed_v1'")->fetchColumn();
     if ($seeded === false) {
@@ -513,7 +551,7 @@ function search_clients(string $term, int $limit = 8): array
     $phoneLike = $digits !== '' ? '%' . $digits . '%' : '__no_phone_match__';
     $emailLike = '%' . $emailTerm . '%';
     return query_all(
-        'SELECT id, name, company_name, phone, COALESCE(email, \'\') email
+        'SELECT id, name, company_name, address, phone, COALESCE(email, \'\') email
          FROM clients
          WHERE phone LIKE ? OR lower(COALESCE(email, \'\')) LIKE ?
          ORDER BY CASE WHEN phone = ? OR lower(COALESCE(email, \'\')) = ? THEN 0 ELSE 1 END, name
@@ -608,16 +646,18 @@ function create_client_account(array $input): int
 {
     $name = trim((string)($input['client_name'] ?? ''));
     $companyName = trim((string)($input['company_name'] ?? ''));
+    $address = trim((string)($input['client_address'] ?? ''));
     $phone = normalize_phone((string)($input['client_phone'] ?? ''));
     $email = mb_strtolower(trim((string)($input['client_email'] ?? '')));
     if ($name === '' || mb_strlen($name) > 150) throw new InvalidArgumentException('ক্লায়েন্টের নাম ১৫০ অক্ষরের মধ্যে লিখুন।');
     if (mb_strlen($companyName) > 150) throw new InvalidArgumentException('কোম্পানির নাম ১৫০ অক্ষরের মধ্যে লিখুন।');
+    if (mb_strlen($address) > 300) throw new InvalidArgumentException('ঠিকানা ৩০০ অক্ষরের মধ্যে লিখুন।');
     if ($email !== '' && (!filter_var($email, FILTER_VALIDATE_EMAIL) || mb_strlen($email) > 190)) throw new InvalidArgumentException('সঠিক ইমেইল লিখুন।');
     if (query_one('SELECT id FROM clients WHERE phone = ?', [$phone])) throw new InvalidArgumentException('এই মোবাইল নম্বরে ইতোমধ্যে একটি ক্লায়েন্ট আছে।');
     if ($email !== '' && query_one("SELECT id FROM clients WHERE lower(COALESCE(email, '')) = ?", [$email])) throw new InvalidArgumentException('এই ইমেইলে ইতোমধ্যে একটি ক্লায়েন্ট আছে।');
     $pdo = db();
-    $stmt = $pdo->prepare('INSERT INTO clients (name, company_name, phone, email) VALUES (?, ?, ?, ?)');
-    $stmt->execute([$name, $companyName, $phone, $email !== '' ? $email : null]);
+    $stmt = $pdo->prepare('INSERT INTO clients (name, company_name, address, phone, email) VALUES (?, ?, ?, ?, ?)');
+    $stmt->execute([$name, $companyName, $address, $phone, $email !== '' ? $email : null]);
     return (int)$pdo->lastInsertId();
 }
 
@@ -672,6 +712,16 @@ function insert_invoice(PDO $pdo, int $clientId, array $items, string $issueDate
     return $id;
 }
 
+function queue_invoice_email(PDO $pdo, int $invoiceId, string $recipient): void
+{
+    $recipient = mb_strtolower(trim($recipient));
+    if ($recipient === '' || !filter_var($recipient, FILTER_VALIDATE_EMAIL)) return;
+    $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql'
+        ? 'INSERT IGNORE INTO email_deliveries (invoice_id, recipient) VALUES (?, ?)'
+        : 'INSERT OR IGNORE INTO email_deliveries (invoice_id, recipient) VALUES (?, ?)';
+    $pdo->prepare($sql)->execute([$invoiceId, $recipient]);
+}
+
 function create_invoice(array $input): int
 {
     $pdo = db();
@@ -706,6 +756,7 @@ function create_invoice(array $input): int
             }
         }
         $id = insert_invoice($pdo, $clientId, $items, $issueDate, $dueDate, $notes, $billing, $recurrenceId, $paymentMethodId);
+        queue_invoice_email($pdo, $id, (string)$billing['email']);
         $pdo->commit();
         return $id;
     } catch (Throwable $e) {
@@ -790,7 +841,8 @@ function generate_due_invoices(): int
                     return $item;
                 }, $items);
                 $billing = ['name' => $recurrence['billing_name'], 'phone' => $recurrence['billing_phone'], 'email' => $recurrence['billing_email'] ?? '', 'company_name' => $recurrence['billing_company_name']];
-                insert_invoice($pdo, (int)$recurrence['client_id'], $invoiceItems, $next, add_days($next, (int)$recurrence['due_days']), $recurrence['notes'], $billing, (int)$recurrence['id'], $recurrence['payment_method_id'] !== null ? (int)$recurrence['payment_method_id'] : null);
+                $invoiceId = insert_invoice($pdo, (int)$recurrence['client_id'], $invoiceItems, $next, add_days($next, (int)$recurrence['due_days']), $recurrence['notes'], $billing, (int)$recurrence['id'], $recurrence['payment_method_id'] !== null ? (int)$recurrence['payment_method_id'] : null);
+                queue_invoice_email($pdo, $invoiceId, (string)($billing['email'] ?? ''));
                 $generated++;
                 $next = next_cycle_date($next, $recurrence['frequency'], (int)$recurrence['anchor_day'], (int)$recurrence['anchor_month']);
             }

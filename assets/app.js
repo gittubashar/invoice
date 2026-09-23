@@ -95,6 +95,31 @@
     applyPaymentColumns();
   }
 
+  const collectionForm = document.querySelector('[data-collection-form]');
+  if (collectionForm) {
+    const amount = collectionForm.querySelector('[data-collection-amount]');
+    const types = [...collectionForm.querySelectorAll('input[name="collection_type"]')];
+    const remaining = collectionForm.dataset.remaining || '';
+    let partialAmount = amount?.value || '';
+    const refreshCollectionType = () => {
+      if (!amount) return;
+      const full = collectionForm.elements.collection_type.value === 'full';
+      if (full) {
+        if (amount.value !== remaining) partialAmount = amount.value;
+        amount.value = remaining;
+        amount.readOnly = true;
+      } else {
+        amount.readOnly = false;
+        amount.value = partialAmount === remaining ? '' : partialAmount;
+      }
+    };
+    amount?.addEventListener('input', () => {
+      if (!amount.readOnly) partialAmount = amount.value;
+    });
+    types.forEach(input => input.addEventListener('change', refreshCollectionType));
+    refreshCollectionType();
+  }
+
   const form = document.getElementById('invoice-form');
   if (!form) return;
 

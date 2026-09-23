@@ -28,7 +28,7 @@ try {
     $source = new PDO('sqlite:' . $sourcePath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
     $source->exec('PRAGMA foreign_keys = ON');
 
-    $tables = ['admins', 'app_meta', 'app_settings', 'payment_methods', 'clients', 'services', 'recurrences', 'recurrence_items', 'invoices', 'invoice_items', 'payments'];
+    $tables = ['admins', 'app_meta', 'app_settings', 'payment_methods', 'clients', 'services', 'recurrences', 'recurrence_items', 'invoices', 'invoice_items', 'payments', 'email_deliveries'];
     $businessTables = ['payment_methods', 'clients', 'services', 'recurrences', 'invoices', 'payments'];
     $existing = 0;
     foreach ($businessTables as $table) $existing += (int)$target->query("SELECT COUNT(*) FROM `{$table}`")->fetchColumn();

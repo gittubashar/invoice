@@ -25,6 +25,8 @@ function status_label(string $value): string { return ['paid' => 'পরিশ�
 function format_date(?string $date): string { return $date ? date('d M Y', strtotime($date)) : '—'; }
 function plural_count(int $number, string $label): string { return number_format($number) . ' ' . $label; }
 
+require_once __DIR__ . '/invoice_mailer.php';
+
 $hasAdmin = (bool)query_one('SELECT id FROM admins LIMIT 1');
 $page = (string)($_GET['page'] ?? 'dashboard');
 
@@ -152,7 +154,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($action === 'create_invoice') {
             $id = create_invoice($_POST);
-            flash('success', 'ইনভয়েস তৈরি এবং সংরক্ষণ করা হয়েছে।');
+            $delivery = send_invoice_email_for_invoice($id);
+            $message = 'ইনভয়েস তৈরি এবং সংরক্ষণ করা হয়েছে।';
+            if ($delivery['status'] === 'sent') $message .= ' PDF ক্লায়েন্টের ইমেইলে পাঠানো হয়েছে।';
+            elseif ($delivery['status'] === 'pending' || $delivery['status'] === 'failed') $message .= ' ইমেইলটি delivery queue-তে আছে; SMTP ঠিক হলে cron পুনরায় চেষ্টা করবে।';
+            else $message .= ' ক্লায়েন্টের ইমেইল না থাকায় ইমেইল পাঠানো হয়নি।';
+            flash('success', $message);
             redirect('invoice', ['id' => $id]);
         }
         if ($action === 'edit_invoice') {
@@ -165,6 +172,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['invoice_id'] ?? 0);
             collect_payment($id, (string)($_POST['amount'] ?? ''), (string)($_POST['method'] ?? ''), (string)($_POST['reference'] ?? ''), (string)($_POST['notes'] ?? ''), (string)($_POST['paid_at'] ?? ''));
             flash('success', 'কালেকশন সংরক্ষণ করা হয়েছে।');
+            redirect('invoice', ['id' => $id]);
+        }
+        if ($action === 'collect_invoice_collection') {
+            $id = (int)($_POST['invoice_id'] ?? 0);
+            $collectionType = (string)($_POST['collection_type'] ?? 'partial');
+            if (!in_array($collectionType, ['partial', 'full'], true)) throw new InvalidArgumentException('কালেকশনের ধরন নির্বাচন করুন।');
+            $invoice = invoice_rows('WHERE i.id=?', [$id], 'i.id DESC', 1)[0] ?? null;
+            if (!$invoice) throw new InvalidArgumentException('ইনভয়েসটি পাওয়া যায়নি।');
+            $remaining = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
+            if ($remaining < 1) throw new InvalidArgumentException('ইনভয়েসটি ইতোমধ্যে সম্পূর্ণ পরিশোধিত।');
+            $amount = $collectionType === 'full' ? number_format($remaining / 100, 2, '.', '') : (string)($_POST['amount'] ?? '');
+            collect_payment($id, $amount, (string)($_POST['method'] ?? ''), (string)($_POST['reference'] ?? ''), (string)($_POST['notes'] ?? ''), (string)($_POST['paid_at'] ?? ''));
+            flash('success', $collectionType === 'full' ? 'Full Paid কালেকশন সংরক্ষণ করা হয়েছে।' : 'Partial কালেকশন সংরক্ষণ করা হয়েছে।');
+            redirect('collections');
+        }
+        if ($action === 'retry_invoice_email') {
+            $id = (int)($_POST['invoice_id'] ?? 0);
+            $delivery = send_invoice_email_for_invoice($id);
+            flash($delivery['status'] === 'sent' ? 'success' : 'error', $delivery['message']);
             redirect('invoice', ['id' => $id]);
         }
         if ($action === 'save_service') {
@@ -205,6 +231,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('edit', ['id' => $id]);
         }
         if ($action === 'collect_payment') redirect('invoice', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
+        if ($action === 'collect_invoice_collection') {
+            $_SESSION['old_collection'] = $_POST;
+            redirect('collections', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
+        }
+        if ($action === 'retry_invoice_email') redirect('invoice', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
         if ($action === 'login') redirect('login');
         if ($action === 'save_service' || $action === 'toggle_service') redirect('services');
         if ($action === 'toggle_recurrence') redirect('recurring');
@@ -220,7 +251,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (empty($_SESSION['admin_id'])) $page = 'login';
-elseif (!in_array($page, ['print', 'pdf', 'download', 'client-search'], true)) generate_due_invoices();
+elseif (!in_array($page, ['print', 'pdf', 'download', 'client-search'], true)) {
+    $generatedInvoices = generate_due_invoices();
+    if ($generatedInvoices > 0) process_invoice_email_queue(min(10, $generatedInvoices));
+}
 
 function icon(string $name, int $size = 20): string
 {
@@ -272,7 +306,7 @@ function begin_page(string $title, string $page, string $subtitle = ''): void
 {
     $admin = query_one('SELECT name, email, role FROM admins WHERE id=?', [(int)$_SESSION['admin_id']]);
     $links = [
-        ['dashboard', 'ওভারভিউ', 'grid'], ['invoices', 'ইনভয়েস', 'invoice'],
+        ['dashboard', 'ওভারভিউ', 'grid'], ['invoices', 'ইনভয়েস', 'invoice'], ['collections', 'ইনভয়েস কালেকশন', 'wallet'],
         ['recurring', 'রিকারিং', 'repeat'], ['clients', 'ক্লায়েন্ট', 'users'], ['services', 'সার্ভিস', 'box'],
         ['payment-methods', 'পেমেন্ট মেথড', 'wallet'],
         ['settings', 'ড্যাশবোর্ড সেটিংস', 'settings'],
@@ -381,6 +415,48 @@ case 'invoices':
     echo '</div>'; invoice_table($rows); echo '</section>';
     end_page(); break;
 
+case 'collections':
+    $search = trim((string)($_GET['q'] ?? ''));
+    $where = '';
+    $params = [];
+    if ($search !== '') {
+        $where = 'WHERE (i.number LIKE ? OR i.billing_name LIKE ? OR i.billing_phone LIKE ? OR i.billing_company_name LIKE ?)';
+        $params = array_fill(0, 4, '%' . $search . '%');
+    }
+    $outstandingInvoices = array_values(array_filter(invoice_rows($where, $params, 'i.id DESC', 500), static fn(array $row): bool => (int)$row['paid_cents'] < (int)$row['total_cents']));
+    $outstandingTotal = array_sum(array_map(static fn(array $row): int => (int)$row['total_cents'] - (int)$row['paid_cents'], $outstandingInvoices));
+    $selectedId = (int)($_GET['id'] ?? 0);
+    $selectedInvoice = $selectedId ? (invoice_rows('WHERE i.id=?', [$selectedId], 'i.id DESC', 1)[0] ?? null) : null;
+    if ($selectedInvoice && (int)$selectedInvoice['paid_cents'] >= (int)$selectedInvoice['total_cents']) $selectedInvoice = null;
+    $oldCollection = $_SESSION['old_collection'] ?? []; unset($_SESSION['old_collection']);
+    $recentCollections = query_all('SELECT p.*, i.number, i.billing_name FROM payments p JOIN invoices i ON i.id=p.invoice_id ORDER BY p.id DESC LIMIT 50');
+    begin_page('ইনভয়েস কালেকশন', $page, 'Partial এবং Full Paid কালেকশন গ্রহণ ও সাম্প্রতিক লেনদেন দেখুন।');
+    if ($selectedInvoice) {
+        $remaining = (int)$selectedInvoice['total_cents'] - (int)$selectedInvoice['paid_cents'];
+        $collectionType = (string)($oldCollection['collection_type'] ?? 'partial');
+        echo '<section class="panel form-panel collection-page-form"><div class="collection-form-heading"><div><span class="eyebrow">COLLECT PAYMENT</span><h2>' . e($selectedInvoice['number']) . ' · ' . e($selectedInvoice['client_name']) . '</h2><p>বর্তমান বকেয়া <strong>' . format_money($remaining) . '</strong></p></div><a class="btn btn-outline btn-sm" href="' . e(url('collections', ['q' => $search])) . '">বন্ধ করুন</a></div><form method="post" class="stack-form" data-collection-form data-remaining="' . e(number_format($remaining / 100, 2, '.', '')) . '">' . csrf_field() . '<input type="hidden" name="action" value="collect_invoice_collection"><input type="hidden" name="invoice_id" value="' . (int)$selectedInvoice['id'] . '"><div class="type-choice"><label><input type="radio" name="collection_type" value="partial"' . ($collectionType === 'partial' ? ' checked' : '') . '><span class="type-card"><strong>Partial Collection</strong><small>বকেয়ার কিছু অংশ গ্রহণ করুন</small></span></label><label><input type="radio" name="collection_type" value="full"' . ($collectionType === 'full' ? ' checked' : '') . '><span class="type-card"><strong>Full Paid Collection</strong><small>সম্পূর্ণ বকেয়া গ্রহণ করুন</small></span></label></div><div class="form-grid"><label>কালেকশনের পরিমাণ (৳)<input type="number" name="amount" data-collection-amount required min="0.01" max="' . e(number_format($remaining / 100, 2, '.', '')) . '" step="0.01" value="' . e($oldCollection['amount'] ?? '') . '" placeholder="0.00"></label><label>পেমেন্ট পদ্ধতি<select name="method" required><option value="cash">ক্যাশ</option><option value="bank">ব্যাংক ট্রান্সফার</option><option value="bkash">বিকাশ</option><option value="nagad">নগদ</option><option value="card">কার্ড</option><option value="other">অন্যান্য</option></select></label><label>তারিখ<input type="date" name="paid_at" required value="' . e($oldCollection['paid_at'] ?? date('Y-m-d')) . '"></label><label>ট্রানজেকশন রেফারেন্স <small>(ঐচ্ছিক)</small><input name="reference" maxlength="120" value="' . e($oldCollection['reference'] ?? '') . '" placeholder="Transaction ID"></label><label class="field-wide">নোট <small>(ঐচ্ছিক)</small><textarea name="notes" rows="2" maxlength="500" placeholder="পেমেন্টের বিবরণ">' . e($oldCollection['notes'] ?? '') . '</textarea></label></div><div class="client-create-actions"><button class="btn btn-primary" type="submit">কালেকশন সেভ করুন</button></div></form></section>';
+    }
+    echo '<section class="panel collection-list-panel"><div class="toolbar"><form method="get" class="search-form"><input type="hidden" name="page" value="collections">' . icon('search', 18) . '<input name="q" value="' . e($search) . '" placeholder="ইনভয়েস, ক্লায়েন্ট বা মোবাইল খুঁজুন"><button type="submit">খুঁজুন</button></form><div class="collection-summary"><span>' . count($outstandingInvoices) . ' টি বকেয়া</span><strong>' . format_money($outstandingTotal) . '</strong></div></div>';
+    if (!$outstandingInvoices) echo '<div class="empty-state">' . icon('check', 34) . '<h3>কোনো বকেয়া ইনভয়েস নেই</h3><p>সব ইনভয়েসের কালেকশন সম্পন্ন হয়েছে।</p></div>';
+    else {
+        echo '<div class="table-wrap"><table><thead><tr><th>ইনভয়েস</th><th>ক্লায়েন্ট</th><th>মোট</th><th>কালেকশন</th><th>বকেয়া</th><th>অবস্থা</th><th></th></tr></thead><tbody>';
+        foreach ($outstandingInvoices as $row) {
+            $due = (int)$row['total_cents'] - (int)$row['paid_cents'];
+            echo '<tr><td><a class="strong-link" href="' . e(url('invoice', ['id' => $row['id']])) . '">' . e($row['number']) . '</a><small>' . e(format_date($row['due_date'])) . '</small></td><td><strong>' . e($row['client_name']) . '</strong><small>' . e($row['client_phone']) . '</small></td><td><strong>' . format_money((int)$row['total_cents']) . '</strong></td><td>' . format_money((int)$row['paid_cents']) . '</td><td><strong>' . format_money($due) . '</strong></td><td>' . badge($row) . '</td><td><a class="btn btn-primary btn-sm" href="' . e(url('collections', ['id' => $row['id'], 'q' => $search])) . '">কালেকশন</a></td></tr>';
+        }
+        echo '</tbody></table></div>';
+    }
+    echo '</section><section class="panel collection-history-panel"><div class="panel-heading"><div><span class="eyebrow">RECENT COLLECTIONS</span><h2>সাম্প্রতিক কালেকশন</h2></div><span class="count-pill">' . count($recentCollections) . ' টি</span></div>';
+    if (!$recentCollections) echo '<div class="empty-state"><p>এখনো কোনো কালেকশন নেই।</p></div>';
+    else {
+        echo '<div class="table-wrap"><table><thead><tr><th>ইনভয়েস</th><th>ক্লায়েন্ট</th><th>পরিমাণ</th><th>পদ্ধতি</th><th>তারিখ</th><th>রেফারেন্স</th></tr></thead><tbody>';
+        $methodLabels = ['cash'=>'ক্যাশ','bank'=>'ব্যাংক ট্রান্সফার','bkash'=>'বিকাশ','nagad'=>'নগদ','card'=>'কার্ড','other'=>'অন্যান্য'];
+        foreach ($recentCollections as $payment) echo '<tr><td><a class="strong-link" href="' . e(url('invoice', ['id' => $payment['invoice_id']])) . '">' . e($payment['number']) . '</a></td><td>' . e($payment['billing_name']) . '</td><td><strong>' . format_money((int)$payment['amount_cents']) . '</strong></td><td>' . e($methodLabels[$payment['method']] ?? $payment['method']) . '</td><td>' . e(format_date($payment['paid_at'])) . '</td><td>' . e($payment['reference'] ?: '—') . '</td></tr>';
+        echo '</tbody></table></div>';
+    }
+    echo '</section>';
+    end_page(); break;
+
 case 'new':
     $old = $_SESSION['old_invoice'] ?? []; unset($_SESSION['old_invoice']);
     $services = query_all('SELECT * FROM services WHERE active=1 ORDER BY name');
@@ -478,8 +554,16 @@ case 'download':
     $invoiceLogo = uploaded_asset_url(setting('logo_path'));
     $contactDetails = array_values(array_filter([setting('mobile_number'), setting('email')], static fn($value) => $value !== ''));
     $contactText = implode(' · ', array_map('e', $contactDetails));
+    $emailDelivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$id]);
     begin_page($invoice['number'], 'invoice', 'ইনভয়েস বিস্তারিত, কালেকশন ও পেমেন্ট ইতিহাস।');
     echo '<div class="detail-actions"><a class="btn btn-outline" href="' . e(url('edit', ['id' => $id])) . '">' . icon('edit', 17) . ' এডিট করুন</a><a class="btn btn-outline" target="_blank" rel="noopener noreferrer" href="' . e(url('pdf', ['id' => $id])) . '">' . icon('print', 17) . ' PDF View</a></div>';
+    if ($emailDelivery) {
+        $emailLabels = ['pending' => 'ইমেইল অপেক্ষমাণ', 'sending' => 'ইমেইল পাঠানো হচ্ছে', 'sent' => 'ইমেইল পাঠানো হয়েছে', 'failed' => 'ইমেইল পাঠানো ব্যর্থ হয়েছে', 'skipped' => 'ইমেইল পাঠানো হয়নি'];
+        $emailStatus = (string)$emailDelivery['status'];
+        echo '<div class="email-delivery-status email-' . e($emailStatus) . '"><div><strong>' . e($emailLabels[$emailStatus] ?? $emailStatus) . '</strong><span>' . e($emailDelivery['recipient']) . ($emailDelivery['sent_at'] ? ' · ' . e(format_date(substr($emailDelivery['sent_at'], 0, 10))) : '') . '</span></div>';
+        if (in_array($emailStatus, ['pending', 'failed'], true)) echo '<form method="post">' . csrf_field() . '<input type="hidden" name="action" value="retry_invoice_email"><input type="hidden" name="invoice_id" value="' . $id . '"><button class="plain-link" type="submit">আবার পাঠান</button></form>';
+        echo '</div>';
+    }
     echo '<div class="invoice-detail-grid"><section class="panel invoice-paper"><div class="paper-head"><div><div class="paper-brand-wrap">' . ($invoiceLogo !== '' ? '<img class="paper-logo" src="' . e($invoiceLogo) . '" alt="">' : '') . '<span class="paper-brand">' . e($siteTitle) . '<span>.</span></span></div><p>INVOICE</p></div><div class="paper-status">' . badge($invoice) . '<strong>' . e($invoice['number']) . '</strong></div></div><div class="paper-meta"><div><span>বিল করা হয়েছে</span><strong>' . e($invoice['client_name']) . '</strong>' . ($invoice['billing_company_name'] !== '' ? '<p><strong>' . e($invoice['billing_company_name']) . '</strong></p>' : '') . '<p>' . e($invoice['client_phone']) . '</p>' . ($invoice['client_email'] !== '' ? '<p>' . e($invoice['client_email']) . '</p>' : '') . '</div><div><span>ইস্যুর তারিখ</span><strong>' . e(format_date($invoice['issue_date'])) . '</strong><span class="meta-gap">পরিশোধের শেষ তারিখ</span><strong>' . e(format_date($invoice['due_date'])) . '</strong></div></div><div class="table-wrap"><table class="items-table"><thead><tr><th>সার্ভিস / আইটেম</th><th>পরিমাণ</th><th>দর</th><th>মোট</th></tr></thead><tbody>';
     foreach ($items as $item) echo '<tr><td><strong>' . e($item['name']) . '</strong>' . ($item['description'] ? '<small>' . e($item['description']) . '</small>' : '') . '</td><td>' . e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) . '</td><td>' . format_money((int)$item['unit_price_cents']) . '</td><td><strong>' . format_money((int)$item['total_cents']) . '</strong></td></tr>';
     echo '</tbody></table></div><div class="paper-totals"><div><span>সর্বমোট</span><strong>' . format_money((int)$invoice['total_cents']) . '</strong></div><div><span>কালেকশন</span><strong>' . format_money((int)$invoice['paid_cents']) . '</strong></div><div class="balance"><span>বকেয়া</span><strong>' . format_money($remaining) . '</strong></div></div>';
@@ -551,7 +635,7 @@ case 'clients':
     $showAddClient = isset($_GET['add']) || $oldClient !== [];
     $clients = query_all('SELECT c.*, COUNT(DISTINCT i.id) invoice_count, COALESCE(SUM(i.total_cents),0) billed FROM clients c LEFT JOIN invoices i ON i.client_id = c.id ' . ($search ? 'WHERE c.name LIKE ? OR c.company_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? ' : '') . 'GROUP BY c.id ORDER BY c.id DESC LIMIT 500', $search ? ['%' . $search . '%', '%' . $search . '%', '%' . $search . '%', '%' . $search . '%'] : []);
     begin_page('ক্লায়েন্ট', $page, 'মোবাইল নম্বরের বিপরীতে তৈরি ক্লায়েন্ট অ্যাকাউন্ট।');
-    if ($showAddClient) echo '<section class="panel form-panel client-create-panel"><div class="client-create-heading"><div><span class="eyebrow">NEW CLIENT</span><h2>নতুন ক্লায়েন্ট যোগ করুন</h2><p>এই ক্লায়েন্টকে পরে ইনভয়েসের সঙ্গে যুক্ত করা যাবে।</p></div><a class="btn btn-outline btn-sm" href="' . e(url('clients')) . '">বন্ধ করুন</a></div><form method="post">' . csrf_field() . '<input type="hidden" name="action" value="save_client"><div class="form-grid"><label>মোবাইল নম্বর <span>*</span><input name="client_phone" inputmode="tel" required value="' . e($oldClient['client_phone'] ?? '') . '" placeholder="01XXXXXXXXX"></label><label>ইমেইল <small>(ঐচ্ছিক)</small><input type="email" name="client_email" maxlength="190" value="' . e($oldClient['client_email'] ?? '') . '" placeholder="client@example.com"></label><label>ক্লায়েন্টের নাম <span>*</span><input name="client_name" maxlength="150" required value="' . e($oldClient['client_name'] ?? '') . '" placeholder="পূর্ণ নাম"></label><label>Company Name <small>(ঐচ্ছিক)</small><input name="company_name" maxlength="150" value="' . e($oldClient['company_name'] ?? '') . '" placeholder="কোম্পানির নাম"></label></div><div class="client-create-actions"><button class="btn btn-primary" type="submit">' . icon('plus', 17) . ' ক্লায়েন্ট যোগ করুন</button></div></form></section>';
+    if ($showAddClient) echo '<section class="panel form-panel client-create-panel"><div class="client-create-heading"><div><span class="eyebrow">NEW CLIENT</span><h2>নতুন ক্লায়েন্ট যোগ করুন</h2><p>এই ক্লায়েন্টকে পরে ইনভয়েসের সঙ্গে যুক্ত করা যাবে।</p></div><a class="btn btn-outline btn-sm" href="' . e(url('clients')) . '">বন্ধ করুন</a></div><form method="post">' . csrf_field() . '<input type="hidden" name="action" value="save_client"><div class="form-grid"><label>মোবাইল নম্বর <span>*</span><input name="client_phone" inputmode="tel" required value="' . e($oldClient['client_phone'] ?? '') . '" placeholder="01XXXXXXXXX"></label><label>ইমেইল <small>(ঐচ্ছিক)</small><input type="email" name="client_email" maxlength="190" value="' . e($oldClient['client_email'] ?? '') . '" placeholder="client@example.com"></label><label>ক্লায়েন্টের নাম <span>*</span><input name="client_name" maxlength="150" required value="' . e($oldClient['client_name'] ?? '') . '" placeholder="পূর্ণ নাম"></label><label>Company Name <small>(ঐচ্ছিক)</small><input name="company_name" maxlength="150" value="' . e($oldClient['company_name'] ?? '') . '" placeholder="কোম্পানির নাম"></label><label class="field-wide">ঠিকানা <small>(ঐচ্ছিক)</small><textarea name="client_address" rows="2" maxlength="300" placeholder="ক্লায়েন্টের পূর্ণ ঠিকানা">' . e($oldClient['client_address'] ?? '') . '</textarea></label></div><div class="client-create-actions"><button class="btn btn-primary" type="submit">' . icon('plus', 17) . ' ক্লায়েন্ট যোগ করুন</button></div></form></section>';
     echo '<section class="panel"><div class="toolbar"><form method="get" class="search-form"><input type="hidden" name="page" value="clients">' . icon('search', 18) . '<input name="q" value="' . e($search) . '" placeholder="নাম, কোম্পানি, মোবাইল বা ইমেইল খুঁজুন"><button type="submit">খুঁজুন</button></form><div class="client-toolbar-actions"><span class="count-pill">' . count($clients) . ' জন ক্লায়েন্ট</span><a class="btn btn-primary btn-sm" href="' . e(url('clients', ['add' => 1])) . '">' . icon('plus', 16) . ' নতুন ক্লায়েন্ট</a></div></div>';
     if (!$clients) echo '<div class="empty-state">' . icon('users', 34) . '<h3>কোনো ক্লায়েন্ট নেই</h3><p>ইনভয়েস তৈরি করলে ক্লায়েন্ট অ্যাকাউন্ট স্বয়ংক্রিয়ভাবে তৈরি হবে।</p></div>';
     else { echo '<div class="table-wrap"><table><thead><tr><th>ক্লায়েন্ট</th><th>Company Name</th><th>মোবাইল</th><th>ইমেইল</th><th>ইনভয়েস</th><th>মোট বিল</th><th></th></tr></thead><tbody>'; foreach ($clients as $client) echo '<tr><td><a class="strong-link" href="' . e(url('client', ['id' => $client['id']])) . '">' . e($client['name']) . '</a><small>অ্যাকাউন্ট #' . (int)$client['id'] . '</small></td><td>' . e($client['company_name'] ?: '—') . '</td><td>' . e($client['phone']) . '</td><td>' . e($client['email'] ?: '—') . '</td><td>' . (int)$client['invoice_count'] . '</td><td><strong>' . format_money((int)$client['billed']) . '</strong></td><td><a class="row-arrow" href="' . e(url('client', ['id' => $client['id']])) . '">' . icon('chevron', 18) . '</a></td></tr>'; echo '</tbody></table></div>'; }
@@ -563,7 +647,7 @@ case 'client':
     if (!$client) { http_response_code(404); redirect('clients'); }
     $rows = invoice_rows('WHERE i.client_id=?', [$id], 'i.id DESC', 500);
     begin_page($client['name'], $page, 'ক্লায়েন্ট প্রোফাইল ও ইনভয়েসের হিসাব।');
-    echo '<div class="client-card panel"><span class="client-avatar">' . e(mb_substr($client['name'], 0, 1)) . '</span><div><h2>' . e($client['name']) . '</h2>' . ($client['company_name'] !== '' ? '<p><strong>' . e($client['company_name']) . '</strong></p>' : '') . '<p>' . e($client['phone']) . ' · ' . e($client['email'] ?: 'ইমেইল দেওয়া হয়নি') . '</p><small>অ্যাকাউন্ট তৈরি ' . e(format_date(substr($client['created_at'], 0, 10))) . '</small></div><span class="count-pill">' . count($rows) . ' টি ইনভয়েস</span></div><section class="panel"><div class="panel-heading"><div><span class="eyebrow">CLIENT INVOICES</span><h2>ইনভয়েস ইতিহাস</h2></div></div>'; invoice_table($rows); echo '</section>';
+    echo '<div class="client-card panel"><span class="client-avatar">' . e(mb_substr($client['name'], 0, 1)) . '</span><div><h2>' . e($client['name']) . '</h2>' . ($client['company_name'] !== '' ? '<p><strong>' . e($client['company_name']) . '</strong></p>' : '') . ($client['address'] !== '' ? '<p>' . nl2br(e($client['address'])) . '</p>' : '') . '<p>' . e($client['phone']) . ' · ' . e($client['email'] ?: 'ইমেইল দেওয়া হয়নি') . '</p><small>অ্যাকাউন্ট তৈরি ' . e(format_date(substr($client['created_at'], 0, 10))) . '</small></div><span class="count-pill">' . count($rows) . ' টি ইনভয়েস</span></div><section class="panel"><div class="panel-heading"><div><span class="eyebrow">CLIENT INVOICES</span><h2>ইনভয়েস ইতিহাস</h2></div></div>'; invoice_table($rows); echo '</section>';
     end_page(); break;
 
 case 'recurring':
@@ -596,10 +680,10 @@ case 'settings':
         echo '<aside class="settings-tip panel"><span class="settings-tip-icon">' . icon('grid', 22) . '</span><h3>সাইটের পরিচিতি</h3><p>Site Title সাইডবার, লগইন পেজ ও ইনভয়েসে দেখা যাবে। Slogan সাইডবারে এবং যোগাযোগের তথ্য ইনভয়েসে থাকবে।</p></aside>';
     } else {
         $encryption = setting('smtp_encryption', 'tls');
-        echo '<section class="panel settings-panel"><div class="section-title"><span class="step">02</span><div><h2>SMTP Settings</h2><p>ভবিষ্যতের ইমেইল পাঠানোর জন্য সার্ভারের তথ্য সংরক্ষণ করুন।</p></div></div><form method="post" class="stack-form">' . csrf_field() . '<input type="hidden" name="action" value="save_smtp_settings"><div class="form-grid"><label class="field-wide">SMTP Host<input name="smtp_host" maxlength="255" value="' . e(setting('smtp_host')) . '" placeholder="smtp.example.com"></label><label>Port<input name="smtp_port" type="number" min="1" max="65535" required value="' . e(setting('smtp_port', '587')) . '"></label><label>Encryption<select name="smtp_encryption"><option value="none" ' . ($encryption === 'none' ? 'selected' : '') . '>None</option><option value="tls" ' . ($encryption === 'tls' ? 'selected' : '') . '>TLS / STARTTLS</option><option value="ssl" ' . ($encryption === 'ssl' ? 'selected' : '') . '>SSL</option></select></label><label class="field-wide">Username<input name="smtp_username" maxlength="255" autocomplete="off" value="' . e(setting('smtp_username')) . '" placeholder="SMTP username"></label><label class="field-wide">Password<input name="smtp_password" type="password" autocomplete="new-password" placeholder="' . (setting('smtp_password') !== '' ? 'সংরক্ষিত আছে · পরিবর্তন করতে নতুন পাসওয়ার্ড লিখুন' : 'SMTP password') . '"></label>';
+        echo '<section class="panel settings-panel"><div class="section-title"><span class="step">02</span><div><h2>SMTP Settings</h2><p>Invoice তৈরি হলে client-কে PDF attachment-সহ স্বয়ংক্রিয় email পাঠাতে এই তথ্য ব্যবহার হবে।</p></div></div><form method="post" class="stack-form">' . csrf_field() . '<input type="hidden" name="action" value="save_smtp_settings"><div class="form-grid"><label class="field-wide">SMTP Host<input name="smtp_host" maxlength="255" value="' . e(setting('smtp_host')) . '" placeholder="smtp.example.com"></label><label>Port<input name="smtp_port" type="number" min="1" max="65535" required value="' . e(setting('smtp_port', '587')) . '"></label><label>Encryption<select name="smtp_encryption"><option value="none" ' . ($encryption === 'none' ? 'selected' : '') . '>None</option><option value="tls" ' . ($encryption === 'tls' ? 'selected' : '') . '>TLS / STARTTLS</option><option value="ssl" ' . ($encryption === 'ssl' ? 'selected' : '') . '>SSL</option></select></label><label class="field-wide">Username<input name="smtp_username" maxlength="255" autocomplete="off" value="' . e(setting('smtp_username')) . '" placeholder="SMTP username"></label><label class="field-wide">Password<input name="smtp_password" type="password" autocomplete="new-password" placeholder="' . (setting('smtp_password') !== '' ? 'সংরক্ষিত আছে · পরিবর্তন করতে নতুন পাসওয়ার্ড লিখুন' : 'SMTP password') . '"></label>';
         if (setting('smtp_password') !== '') echo '<label class="checkbox-line field-wide"><input type="checkbox" name="smtp_clear_password" value="1"> সংরক্ষিত পাসওয়ার্ড সরান</label>';
         echo '<label>From Name<input name="smtp_from_name" maxlength="150" value="' . e(setting('smtp_from_name', setting('site_title', 'Billflow'))) . '" placeholder="প্রেরকের নাম"></label><label>From Email<input name="smtp_from_email" type="email" value="' . e(setting('smtp_from_email', setting('email'))) . '" placeholder="billing@example.com"></label></div><div class="settings-actions"><button class="btn btn-primary" type="submit">SMTP Settings সেভ করুন ' . icon('arrow', 17) . '</button></div></form></section>';
-        echo '<aside class="settings-tip panel"><span class="settings-tip-icon">' . icon('settings', 22) . '</span><h3>ইমেইল সেটআপ</h3><p>SMTP তথ্য এখন নিরাপদে সংরক্ষিত হবে। ইনভয়েস ইমেইল পাঠানোর ব্যবস্থা যুক্ত হলে এই সেটিংস ব্যবহার করা যাবে।</p></aside>';
+        echo '<aside class="settings-tip panel"><span class="settings-tip-icon">' . icon('settings', 22) . '</span><h3>স্বয়ংক্রিয় Invoice Email</h3><p>Client-এর বৈধ email থাকলে নতুন ও recurring invoice-এর PDF স্বয়ংক্রিয়ভাবে পাঠানো হবে। ব্যর্থ delivery cron সর্বোচ্চ ৩ বার চেষ্টা করবে।</p></aside>';
     }
     echo '</div>';
     end_page(); break;

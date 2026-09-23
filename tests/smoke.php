@@ -48,6 +48,7 @@ try {
     ];
     $first = create_invoice($base + ['invoice_type' => 'one_time']);
     $second = create_invoice(array_replace($base, ['client_name' => 'Ignored duplicate', 'client_phone' => '01712345678', 'company_name' => 'Renamed Ltd', 'invoice_type' => 'recurring', 'frequency' => 'monthly', 'issue_date' => add_days(date('Y-m-d'), -62), 'due_date' => add_days(date('Y-m-d'), -55)]));
+    expect((int)query_one('SELECT COUNT(*) total FROM email_deliveries WHERE invoice_id IN (?,?)', [$first, $second])['total'] === 2, 'Invoices with client email must enter the email delivery queue');
     expect((int)query_one('SELECT COUNT(*) total FROM clients')['total'] === 1, 'Phone must reuse client');
     $phoneMatches = search_clients('017123');
     $emailMatches = search_clients('test@example');
@@ -99,8 +100,8 @@ try {
         throw new RuntimeException('Inactive method should be rejected for new invoices');
     } catch (InvalidArgumentException $expected) {}
     expect((int)query_one('SELECT COUNT(*) total FROM clients')['total'] === 2, 'Changed phone must link a new client account');
-    $manualClientId = create_client_account(['client_name' => 'Manual Client', 'company_name' => 'Manual Co', 'client_phone' => '01812345678', 'client_email' => 'manual@example.test']);
-    expect((int)query_one('SELECT COUNT(*) total FROM clients WHERE id=? AND company_name=?', [$manualClientId, 'Manual Co'])['total'] === 1, 'Client page must create a standalone client account');
+    $manualClientId = create_client_account(['client_name' => 'Manual Client', 'company_name' => 'Manual Co', 'client_address' => 'Dhaka, Bangladesh', 'client_phone' => '01812345678', 'client_email' => 'manual@example.test']);
+    expect((int)query_one('SELECT COUNT(*) total FROM clients WHERE id=? AND company_name=? AND address=?', [$manualClientId, 'Manual Co', 'Dhaka, Bangladesh'])['total'] === 1, 'Client page must create a standalone client account with address');
     try {
         create_client_account(['client_name' => 'Duplicate Client', 'client_phone' => '01812345678', 'client_email' => 'other@example.test']);
         throw new RuntimeException('Duplicate client phone should be rejected');
