@@ -6,6 +6,25 @@ date_default_timezone_set('Asia/Dhaka');
 const DEFAULT_SUPER_ADMIN_EMAIL = 'me@kbashar.com';
 const DEFAULT_SUPER_ADMIN_HASH = '$2a$12$u4m/DiaBZhAO0/p26M741eYJavOi8t21FDd6AOit8IhQfMBbVOAWO';
 
+function load_database_environment(): void
+{
+    $path = __DIR__ . '/.env';
+    if (!is_file($path)) return;
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) continue;
+        [$key, $value] = array_map('trim', explode('=', $line, 2));
+        if ($key === '' || getenv($key) !== false) continue;
+        if (strlen($value) >= 2 && (($value[0] === '"' && str_ends_with($value, '"')) || ($value[0] === "'" && str_ends_with($value, "'")))) {
+            $value = substr($value, 1, -1);
+        }
+        putenv($key . '=' . $value);
+        $_ENV[$key] = $value;
+    }
+}
+
+load_database_environment();
+
 function db(): PDO
 {
     $connection = $GLOBALS['billflow_db_connection'] ?? null;
@@ -13,17 +32,35 @@ function db(): PDO
         return $connection;
     }
 
-    $path = getenv('INVOICE_DB_PATH') ?: __DIR__ . '/storage/invoice.sqlite';
-    $directory = dirname($path);
-    if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
-        throw new RuntimeException('Database directory could not be created.');
+    $sqlitePath = getenv('INVOICE_DB_PATH');
+    $driver = $sqlitePath !== false && $sqlitePath !== '' ? 'sqlite' : strtolower(getenv('DB_DRIVER') ?: 'mysql');
+    if ($driver === 'sqlite') {
+        $path = $sqlitePath ?: __DIR__ . '/storage/invoice.sqlite';
+        $directory = dirname($path);
+        if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
+            throw new RuntimeException('Database directory could not be created.');
+        }
+        $connection = new PDO('sqlite:' . $path);
+        $connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $connection->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        $connection->exec('PRAGMA foreign_keys = ON');
+        $connection->exec('PRAGMA busy_timeout = 5000');
+        $connection->exec('PRAGMA journal_mode = WAL');
+    } elseif ($driver === 'mysql') {
+        $host = getenv('DB_HOST') ?: '127.0.0.1';
+        $port = (int)(getenv('DB_PORT') ?: 3306);
+        $database = getenv('DB_DATABASE') ?: 'invoice';
+        $username = getenv('DB_USERNAME') ?: 'root';
+        $password = getenv('DB_PASSWORD') !== false ? (string)getenv('DB_PASSWORD') : '';
+        $connection = new PDO(
+            "mysql:host={$host};port={$port};dbname={$database};charset=utf8mb4",
+            $username,
+            $password,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
+        );
+    } else {
+        throw new RuntimeException('Unsupported database driver: ' . $driver);
     }
-    $connection = new PDO('sqlite:' . $path);
-    $connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $connection->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    $connection->exec('PRAGMA foreign_keys = ON');
-    $connection->exec('PRAGMA busy_timeout = 5000');
-    $connection->exec('PRAGMA journal_mode = WAL');
     migrate($connection);
     $GLOBALS['billflow_db_connection'] = $connection;
     return $connection;
@@ -35,6 +72,15 @@ function close_db(): void
 }
 
 function migrate(PDO $pdo): void
+{
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+        migrate_mysql($pdo);
+        return;
+    }
+    migrate_sqlite($pdo);
+}
+
+function migrate_sqlite(PDO $pdo): void
 {
     $pdo->exec(<<<'SQL'
 CREATE TABLE IF NOT EXISTS admins (
@@ -176,16 +222,166 @@ SQL);
     }
 
     // Apply the requested default credential once. Later password changes remain intact.
-    $seeded = $pdo->query("SELECT value FROM app_meta WHERE key = 'super_admin_seed_v1'")->fetchColumn();
+    $seeded = $pdo->query("SELECT value FROM app_meta WHERE `key` = 'super_admin_seed_v1'")->fetchColumn();
     if ($seeded === false) {
         $pdo->beginTransaction();
         try {
-            $seeded = $pdo->query("SELECT value FROM app_meta WHERE key = 'super_admin_seed_v1'")->fetchColumn();
+            $seeded = $pdo->query("SELECT value FROM app_meta WHERE `key` = 'super_admin_seed_v1'")->fetchColumn();
             if ($seeded === false) {
                 $stmt = $pdo->prepare("INSERT INTO admins (name, email, password_hash, role) VALUES (?, ?, ?, 'super_admin') ON CONFLICT(email) DO UPDATE SET name=excluded.name, password_hash=excluded.password_hash, role=excluded.role");
                 $stmt->execute(['Super Admin', DEFAULT_SUPER_ADMIN_EMAIL, DEFAULT_SUPER_ADMIN_HASH]);
-                $pdo->prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)')->execute(['super_admin_seed_v1', date('c')]);
+                $pdo->prepare('INSERT INTO app_meta (`key`, value) VALUES (?, ?)')->execute(['super_admin_seed_v1', date('c')]);
             }
+            $pdo->commit();
+        } catch (Throwable $error) {
+            $pdo->rollBack();
+            throw $error;
+        }
+    }
+}
+
+function migrate_mysql(PDO $pdo): void
+{
+    $statements = [
+        "CREATE TABLE IF NOT EXISTS admins (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            email VARCHAR(190) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            role VARCHAR(32) NOT NULL DEFAULT 'admin',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS app_meta (
+            `key` VARCHAR(190) PRIMARY KEY,
+            value TEXT NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS app_settings (
+            `key` VARCHAR(190) PRIMARY KEY,
+            value TEXT NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS payment_methods (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            type VARCHAR(32) NOT NULL,
+            name VARCHAR(120) NOT NULL,
+            account_name VARCHAR(150) NOT NULL DEFAULT '',
+            account_number VARCHAR(150) NOT NULL DEFAULT '',
+            mobile_number VARCHAR(150) NOT NULL DEFAULT '',
+            branch VARCHAR(150) NOT NULL DEFAULT '',
+            instructions TEXT NOT NULL,
+            qr_path VARCHAR(500) NOT NULL DEFAULT '',
+            active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_payment_methods_active (active, name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS clients (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            company_name VARCHAR(150) NOT NULL DEFAULT '',
+            phone VARCHAR(30) NOT NULL UNIQUE,
+            email VARCHAR(190) NULL,
+            password_hash VARCHAR(255) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_clients_email (email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS services (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            description VARCHAR(500) NOT NULL DEFAULT '',
+            price_cents BIGINT UNSIGNED NOT NULL,
+            active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_services_price CHECK (price_cents >= 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS recurrences (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            client_id BIGINT UNSIGNED NOT NULL,
+            frequency VARCHAR(20) NOT NULL,
+            next_issue_date DATE NOT NULL,
+            due_days INT UNSIGNED NOT NULL DEFAULT 7,
+            anchor_day TINYINT UNSIGNED NOT NULL,
+            anchor_month TINYINT UNSIGNED NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            notes TEXT NOT NULL,
+            payment_method_id BIGINT UNSIGNED NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_recurrences_client FOREIGN KEY (client_id) REFERENCES clients(id),
+            CONSTRAINT fk_recurrences_payment_method FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL,
+            CONSTRAINT chk_recurrences_frequency CHECK (frequency IN ('monthly','quarterly','yearly')),
+            CONSTRAINT chk_recurrences_status CHECK (status IN ('active','paused')),
+            KEY idx_recurrences_next (status, next_issue_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS recurrence_items (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            recurrence_id BIGINT UNSIGNED NOT NULL,
+            service_id BIGINT UNSIGNED NULL,
+            name VARCHAR(150) NOT NULL,
+            description VARCHAR(500) NOT NULL DEFAULT '',
+            quantity DECIMAL(14,4) NOT NULL,
+            unit_price_cents BIGINT UNSIGNED NOT NULL,
+            CONSTRAINT fk_recurrence_items_recurrence FOREIGN KEY (recurrence_id) REFERENCES recurrences(id) ON DELETE CASCADE,
+            CONSTRAINT fk_recurrence_items_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL,
+            CONSTRAINT chk_recurrence_items_quantity CHECK (quantity > 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS invoices (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            number VARCHAR(80) NOT NULL UNIQUE,
+            client_id BIGINT UNSIGNED NOT NULL,
+            billing_name VARCHAR(150) NOT NULL DEFAULT '',
+            billing_phone VARCHAR(30) NOT NULL DEFAULT '',
+            billing_email VARCHAR(190) NOT NULL DEFAULT '',
+            billing_company_name VARCHAR(150) NOT NULL DEFAULT '',
+            recurrence_id BIGINT UNSIGNED NULL,
+            cycle_date DATE NULL,
+            issue_date DATE NOT NULL,
+            due_date DATE NOT NULL,
+            notes TEXT NOT NULL,
+            total_cents BIGINT UNSIGNED NOT NULL,
+            payment_method_id BIGINT UNSIGNED NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_invoices_client FOREIGN KEY (client_id) REFERENCES clients(id),
+            CONSTRAINT fk_invoices_recurrence FOREIGN KEY (recurrence_id) REFERENCES recurrences(id),
+            CONSTRAINT fk_invoices_payment_method FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL,
+            CONSTRAINT uq_invoices_recurrence_cycle UNIQUE (recurrence_id, cycle_date),
+            KEY idx_invoices_client (client_id),
+            KEY idx_invoices_due (due_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS invoice_items (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            service_id BIGINT UNSIGNED NULL,
+            name VARCHAR(150) NOT NULL,
+            description VARCHAR(500) NOT NULL DEFAULT '',
+            quantity DECIMAL(14,4) NOT NULL,
+            unit_price_cents BIGINT UNSIGNED NOT NULL,
+            total_cents BIGINT UNSIGNED NOT NULL,
+            CONSTRAINT fk_invoice_items_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+            CONSTRAINT fk_invoice_items_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL,
+            CONSTRAINT chk_invoice_items_quantity CHECK (quantity > 0),
+            KEY idx_invoice_items_invoice (invoice_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS payments (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            amount_cents BIGINT UNSIGNED NOT NULL,
+            method VARCHAR(32) NOT NULL,
+            reference VARCHAR(120) NOT NULL DEFAULT '',
+            notes VARCHAR(500) NOT NULL DEFAULT '',
+            paid_at DATE NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_payments_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+            CONSTRAINT chk_payments_amount CHECK (amount_cents > 0),
+            KEY idx_payments_invoice (invoice_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    ];
+    foreach ($statements as $statement) $pdo->exec($statement);
+
+    $seeded = $pdo->query("SELECT value FROM app_meta WHERE `key` = 'super_admin_seed_v1'")->fetchColumn();
+    if ($seeded === false) {
+        $pdo->beginTransaction();
+        try {
+            $stmt = $pdo->prepare("INSERT INTO admins (name, email, password_hash, role) VALUES (?, ?, ?, 'super_admin') ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), role=VALUES(role)");
+            $stmt->execute(['Super Admin', DEFAULT_SUPER_ADMIN_EMAIL, DEFAULT_SUPER_ADMIN_HASH]);
+            $pdo->prepare('INSERT INTO app_meta (`key`, value) VALUES (?, ?)')->execute(['super_admin_seed_v1', date('c')]);
             $pdo->commit();
         } catch (Throwable $error) {
             $pdo->rollBack();
@@ -210,7 +406,7 @@ function query_one(string $sql, array $params = []): array|false
 
 function setting(string $key, string $default = ''): string
 {
-    $row = query_one('SELECT value FROM app_settings WHERE key = ?', [$key]);
+    $row = query_one('SELECT value FROM app_settings WHERE `key` = ?', [$key]);
     return $row ? (string)$row['value'] : $default;
 }
 
@@ -219,7 +415,10 @@ function save_settings(array $values): void
     $pdo = db();
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+        $sql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql'
+            ? 'INSERT INTO app_settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value=VALUES(value)'
+            : 'INSERT INTO app_settings (`key`, value) VALUES (?, ?) ON CONFLICT(`key`) DO UPDATE SET value = excluded.value';
+        $stmt = $pdo->prepare($sql);
         foreach ($values as $key => $value) {
             $stmt->execute([$key, $value]);
         }

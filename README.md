@@ -1,10 +1,20 @@
 # Billflow
 
-PHP 8.3 + SQLite দিয়ে তৈরি ইনভয়েস ও কালেকশন অ্যাপ।
+PHP 8.3 + MySQL দিয়ে তৈরি ইনভয়েস ও কালেকশন অ্যাপ।
 
 ## চালু করুন
 
-Laragon-এ এই ফোল্ডারটি site root হিসেবে খুলুন। ডিফল্ট Super Admin ইমেইল `me@kbashar.com`; দেয়া bcrypt hash-টি ডেটাবেসে একবার সংরক্ষণ করা হয়। লগইনের জন্য সেই hash-এর **মূল পাসওয়ার্ড** লিখতে হবে, hash string নয়। SQLite ডেটাবেস `storage/invoice.sqlite`-এ স্বয়ংক্রিয়ভাবে তৈরি হবে। `storage` ফোল্ডারে PHP/Apache-এর লেখার অনুমতি থাকতে হবে।
+Laragon-এ এই ফোল্ডারটি site root হিসেবে খুলুন। `.env.example` কপি করে `.env` বানিয়ে MySQL host, database, username ও password দিন। MySQL-এ নির্ধারিত database আগে তৈরি থাকতে হবে; প্রথম request-এ প্রয়োজনীয় table স্বয়ংক্রিয়ভাবে তৈরি হবে। ডিফল্ট Super Admin ইমেইল `me@kbashar.com`; দেয়া bcrypt hash-টি ডেটাবেসে একবার সংরক্ষণ করা হয়। লগইনের জন্য সেই hash-এর **মূল পাসওয়ার্ড** লিখতে হবে, hash string নয়।
+
+## SQLite থেকে MySQL migration
+
+আগের `storage/invoice.sqlite`-এর সব data, ID এবং relation MySQL-এ নিতে প্রথমে `.env`-এ MySQL connection ঠিক করে চালান:
+
+```powershell
+& 'D:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe' migrate_sqlite_to_mysql.php
+```
+
+Target MySQL database-এ আগে থেকেই business data থাকলে script থেমে যাবে। নিশ্চিতভাবে সেটি মুছে SQLite data দিয়ে প্রতিস্থাপন করতে `--fresh` দিন। Migration সফল হওয়ার আগে পুরোনো SQLite file মুছবেন না।
 
 PHP built-in server দিয়ে চালাতে:
 
@@ -47,4 +57,4 @@ Basic Settings থেকে Logo (PNG, JPG, WebP; সর্বোচ্চ ৩ M
 - Admin login, password hashing ও CSRF token আছে।
 - টাকা পয়সায় integer হিসেবে সংরক্ষণ করা হয়। অতিরিক্ত কালেকশন বন্ধ করা আছে।
 - `storage/.htaccess` Apache-তে ডেটাবেস ডাউনলোড বন্ধ করে। Built-in server-এর `router.php`-ও এটি বন্ধ করে।
-- লাইভ deployment-এ HTTPS, নিয়মিত SQLite backup, এবং প্রকৃত payment gateway যোগ করতে হবে।
+- লাইভ deployment-এ HTTPS, নিয়মিত MySQL backup, এবং প্রকৃত payment gateway যোগ করতে হবে।
