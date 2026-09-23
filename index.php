@@ -25,10 +25,20 @@ function status_label(string $value): string { return ['paid' => 'পরিশ�
 function format_date(?string $date): string { return $date ? date('d M Y', strtotime($date)) : '—'; }
 function plural_count(int $number, string $label): string { return number_format($number) . ' ' . $label; }
 
-require_once __DIR__ . '/invoice_mailer.php';
+$mailerAvailable = is_file(__DIR__ . '/vendor/autoload.php');
+if ($mailerAvailable) require_once __DIR__ . '/invoice_mailer.php';
 
-$hasAdmin = (bool)query_one('SELECT id FROM admins LIMIT 1');
 $page = (string)($_GET['page'] ?? 'dashboard');
+try {
+    $hasAdmin = (bool)query_one('SELECT id FROM admins LIMIT 1');
+} catch (Throwable $error) {
+    error_log('Invoice database bootstrap failed: ' . $error->getMessage());
+    http_response_code(503);
+    $envMissing = !is_file(__DIR__ . '/.env');
+    $mysqlDriverMissing = !in_array('mysql', PDO::getAvailableDrivers(), true);
+    echo '<!doctype html><html lang="bn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database setup required</title><style>body{margin:0;background:#f4f7f5;color:#243d34;font:15px/1.65 Arial,sans-serif}.setup{width:min(680px,calc(100% - 32px));margin:8vh auto;padding:30px;border:1px solid #dce7e1;border-radius:14px;background:#fff;box-shadow:0 14px 40px #193e3214}.setup h1{margin:0 0 8px;font-size:25px}.setup p{color:#687d74}.setup code{padding:3px 6px;border-radius:5px;background:#edf4f0;color:#086e5c}.setup li{margin:8px 0}.state{padding:11px 13px;border-radius:8px;background:#fff3ef;color:#9b4e38}</style></head><body><main class="setup"><h1>Database connection সম্পূর্ণ হয়নি</h1><p>Live server-এ MySQL configuration বা PHP extension অনুপস্থিত। Server error log-এ বিস্তারিত technical error লেখা হয়েছে।</p><div class="state">' . ($envMissing ? '<code>.env</code> file পাওয়া যায়নি।' : '<code>.env</code> পাওয়া গেছে, কিন্তু MySQL connection সফল হয়নি।') . '</div><ol><li><code>.env.example</code> কপি/rename করে <code>.env</code> তৈরি করুন।</li><li>Live MySQL-এর DB_HOST, DB_DATABASE, DB_USERNAME ও DB_PASSWORD দিন।</li><li>PHP-এর <code>pdo_mysql</code> extension চালু রাখুন' . ($mysqlDriverMissing ? '—এটি বর্তমানে পাওয়া যাচ্ছে না' : '') . '।</li><li>Project root-এ <code>composer install --no-dev</code> চালান অথবা সম্পূর্ণ <code>vendor</code> folder upload করুন।</li></ol></main></body></html>';
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!hash_equals(csrf(), (string)($_POST['csrf'] ?? ''))) {
@@ -154,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($action === 'create_invoice') {
             $id = create_invoice($_POST);
-            $delivery = send_invoice_email_for_invoice($id);
+            $delivery = function_exists('send_invoice_email_for_invoice') ? send_invoice_email_for_invoice($id) : ['status' => 'pending', 'message' => 'Composer vendor পাওয়া যায়নি।'];
             $message = 'ইনভয়েস তৈরি এবং সংরক্ষণ করা হয়েছে।';
             if ($delivery['status'] === 'sent') $message .= ' PDF ক্লায়েন্টের ইমেইলে পাঠানো হয়েছে।';
             elseif ($delivery['status'] === 'pending' || $delivery['status'] === 'failed') $message .= ' ইমেইলটি delivery queue-তে আছে; SMTP ঠিক হলে cron পুনরায় চেষ্টা করবে।';
@@ -189,6 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($action === 'retry_invoice_email') {
             $id = (int)($_POST['invoice_id'] ?? 0);
+            if (!function_exists('send_invoice_email_for_invoice')) throw new RuntimeException('Email পাঠাতে server-এ composer install চালিয়ে vendor folder তৈরি করুন।');
             $delivery = send_invoice_email_for_invoice($id);
             flash($delivery['status'] === 'sent' ? 'success' : 'error', $delivery['message']);
             redirect('invoice', ['id' => $id]);
@@ -253,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (empty($_SESSION['admin_id'])) $page = 'login';
 elseif (!in_array($page, ['print', 'pdf', 'download', 'client-search'], true)) {
     $generatedInvoices = generate_due_invoices();
-    if ($generatedInvoices > 0) process_invoice_email_queue(min(10, $generatedInvoices));
+    if ($generatedInvoices > 0 && function_exists('process_invoice_email_queue')) process_invoice_email_queue(min(10, $generatedInvoices));
 }
 
 function icon(string $name, int $size = 20): string

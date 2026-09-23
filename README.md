@@ -1,5 +1,29 @@
 # Billflow
 
+## Live server deployment
+
+`.env`-এ database ও SMTP password থাকে, তাই এটি Git-এ upload হয় না। Live server-এর project root-এ `.env.example` কপি করে `.env` নামে নতুন file তৈরি করুন এবং hosting provider-এর MySQL তথ্য বসান:
+
+```dotenv
+DB_DRIVER=mysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=hosting_database_name
+DB_USERNAME=hosting_database_user
+DB_PASSWORD=hosting_database_password
+```
+
+SSH/Terminal থাকলে project root-এ চালান:
+
+```bash
+cp .env.example .env
+composer install --no-dev --optimize-autoloader
+```
+
+Terminal না থাকলে cPanel File Manager দিয়ে `.env.example` কপি/rename করে `.env` বানান। Local project-এর সম্পূর্ণ `vendor/` folder-ও server-এ upload করুন। PHP-তে `pdo_mysql`, `mbstring`, `openssl`, `sodium` এবং `gd` extension চালু থাকতে হবে। MySQL database ও user আগে তৈরি করে user-কে database-এর সব প্রয়োজনীয় permission দিন। প্রথম সফল request-এ application প্রয়োজনীয় table তৈরি করবে।
+
+Deployment-এর পরে `.env`, `vendor/autoload.php` এবং `assets/uploads/` আছে কি না যাচাই করুন। Database connection ব্যর্থ হলে application এখন raw HTTP 500 না দেখিয়ে setup নির্দেশনা দেখাবে; আসল connection error hosting error log-এ থাকবে।
+
 PHP 8.3 + MySQL দিয়ে তৈরি ইনভয়েস ও কালেকশন অ্যাপ।
 
 ## চালু করুন
