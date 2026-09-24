@@ -10,7 +10,7 @@ function uploaded_asset_url(string $path): string
 function store_uploaded_image(?array $upload, string $kind): ?string
 {
     if (!$upload || ($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) return null;
-    if (!in_array($kind, ['logo', 'favicon', 'qr'], true)) throw new InvalidArgumentException('আপলোডের ধরন সঠিক নয়।');
+    if (!in_array($kind, ['logo', 'favicon', 'qr', 'signature'], true)) throw new InvalidArgumentException('আপলোডের ধরন সঠিক নয়।');
     if (($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         throw new InvalidArgumentException('ছবি আপলোড করা যায়নি। আবার চেষ্টা করুন।');
     }

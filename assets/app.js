@@ -47,22 +47,22 @@
   const paymentResizer = paymentLayout?.querySelector('[data-payment-resizer]');
   if (paymentLayout && paymentResizer) {
     const desktop = window.matchMedia('(min-width: 1281px)');
-    let ratio = Math.min(.72, Math.max(.4, Number(localStorage.getItem('paymentColumnRatio')) || .57));
+    let ratio = Math.min(.6, Math.max(.28, Number(localStorage.getItem('paymentColumnRatioV2')) || .43));
     const applyPaymentColumns = () => {
       if (!desktop.matches) {
         paymentLayout.style.removeProperty('grid-template-columns');
         return;
       }
       const available = paymentLayout.clientWidth - 32;
-      const minLeft = Math.min(360, available * .5);
-      const minRight = Math.min(320, available * .45);
+      const minLeft = Math.min(320, available * .45);
+      const minRight = Math.min(360, available * .5);
       const left = Math.max(minLeft, Math.min(available - minRight, available * ratio));
-      paymentLayout.style.gridTemplateColumns = `${left}px 12px minmax(320px, 1fr)`;
+      paymentLayout.style.gridTemplateColumns = `${left}px 12px minmax(360px, 1fr)`;
     };
     const setRatioFromPointer = clientX => {
       const rect = paymentLayout.getBoundingClientRect();
       const available = rect.width - 32;
-      ratio = Math.min(.72, Math.max(.4, (clientX - rect.left) / available));
+      ratio = Math.min(.6, Math.max(.28, (clientX - rect.left) / available));
       applyPaymentColumns();
     };
     paymentResizer.addEventListener('pointerdown', event => {
@@ -78,17 +78,17 @@
     const finishResize = event => {
       if (paymentResizer.hasPointerCapture(event.pointerId)) paymentResizer.releasePointerCapture(event.pointerId);
       paymentLayout.classList.remove('is-resizing');
-      localStorage.setItem('paymentColumnRatio', ratio.toFixed(3));
+      localStorage.setItem('paymentColumnRatioV2', ratio.toFixed(3));
     };
     paymentResizer.addEventListener('pointerup', finishResize);
     paymentResizer.addEventListener('pointercancel', finishResize);
     paymentResizer.addEventListener('keydown', event => {
       if (!desktop.matches || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
-      if (event.key === 'Home') ratio = .4;
-      else if (event.key === 'End') ratio = .72;
-      else ratio = Math.min(.72, Math.max(.4, ratio + (event.key === 'ArrowRight' ? .03 : -.03)));
-      localStorage.setItem('paymentColumnRatio', ratio.toFixed(3));
+      if (event.key === 'Home') ratio = .28;
+      else if (event.key === 'End') ratio = .6;
+      else ratio = Math.min(.6, Math.max(.28, ratio + (event.key === 'ArrowRight' ? .03 : -.03)));
+      localStorage.setItem('paymentColumnRatioV2', ratio.toFixed(3));
       applyPaymentColumns();
     });
     window.addEventListener('resize', applyPaymentColumns);

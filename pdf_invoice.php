@@ -11,6 +11,8 @@ function invoice_pdf_html(array $invoice, array $items, array $methods, string $
     $website = setting('website');
     $logo = uploaded_asset_url(setting('logo_path'));
     $logoFile = $logo !== '' ? str_replace('\\', '/', __DIR__ . '/' . $logo) : '';
+    $signature = uploaded_asset_url(setting('signature_path'));
+    $signatureFile = $signature !== '' ? str_replace('\\', '/', __DIR__ . '/' . $signature) : '';
     $due = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
     $status = invoice_status($invoice);
     $methodTypes = ['bank' => 'ব্যাংক', 'mfs' => 'মোবাইল ব্যাংকিং', 'card' => 'কার্ড', 'other' => 'অন্যান্য'];
@@ -49,8 +51,8 @@ table{border-collapse:collapse;width:100%}
 .payment-card .qr-cell{text-align:right;width:17mm;padding-left:1mm;border:0}
 .payment-card img{width:14mm;height:14mm}
 .note-signature{margin-top:9mm}.note-signature td{vertical-align:bottom}
-.note h2{font-size:9pt;color:#0d5489}.note p{font-size:7pt}
-.signature{border-top:0.3mm solid #234a7a;text-align:center;font-size:7pt;padding-top:.5mm}
+.note h2{font-size:9pt;color:#0d5489}.note ol{margin:.5mm 0 0;padding-left:5mm}.note li{font-size:7pt;line-height:1.3}
+.signature{text-align:center;font-size:7pt}.signature-image{display:block;max-width:35mm;max-height:13mm;margin:0 auto .5mm}.signature-line{width:100%;border-top:0.3mm solid #234a7a;margin:0 auto .5mm}.signature strong,.signature small{display:block;text-align:center}
 .footer{margin-top:2mm;border-top:0.3mm solid #478ab9;padding-top:1mm;text-align:center;color:#376086;font-size:6.5pt}
 </style></head><body>
 <table class="header"><tr>
@@ -109,7 +111,7 @@ table{border-collapse:collapse;width:100%}
     <?php endforeach; ?>
     <?php if ($methods): ?><?php $remainder = count($methods) % 3; for ($blank = $remainder; $remainder !== 0 && $blank < 3; $blank++): ?><td></td><?php endfor; ?></tr></table><?php endif; ?>
 </div>
-<table class="note-signature"><tr><td style="width:70%"><div class="note"><h2>নোট</h2><p><?= $invoice['notes'] !== '' ? nl2br(e($invoice['notes'])) : 'ধন্যবাদ। সময়মতো পেমেন্ট করার জন্য অনুরোধ করা হলো।' ?></p></div></td><td style="width:30%"><div class="signature">Authorized Signature<br><?= e($siteTitle) ?></div></td></tr></table>
+<table class="note-signature"><tr><td style="width:70%"><div class="note"><h2>নোট</h2><ol><li>পেমেন্ট করার সময় ইনভয়েস নম্বর উল্লেখ করুন।</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div></td><td style="width:30%;text-align:center"><div class="signature"><?php if ($signatureFile !== ''): ?><img class="signature-image" src="<?= e($signatureFile) ?>"><?php endif; ?><div class="signature-line"></div><strong>Authorized Signature</strong><small><?= e($siteTitle) ?></small></div></td></tr></table>
 <div class="footer"><?= e($slogan !== '' ? $slogan : 'আপনার আস্থায় আমাদের পথচলা') ?><?php if ($website !== ''): ?> &nbsp; | &nbsp; <?= e($website) ?><?php endif; ?></div>
 </body></html>
 <?php

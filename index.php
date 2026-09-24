@@ -77,17 +77,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($website !== '' && (mb_strlen($website) > 200 || !filter_var($website, FILTER_VALIDATE_URL) || !in_array(parse_url($website, PHP_URL_SCHEME), ['http', 'https'], true))) throw new InvalidArgumentException('Website এর সম্পূর্ণ http বা https লিংক লিখুন।');
             $oldLogo = setting('logo_path');
             $oldFavicon = setting('favicon_path');
+            $oldSignature = setting('signature_path');
             $created = [];
             try {
                 $newLogo = store_uploaded_image($_FILES['logo_file'] ?? null, 'logo');
                 if ($newLogo !== null) $created[] = $newLogo;
                 $newFavicon = store_uploaded_image($_FILES['favicon_file'] ?? null, 'favicon');
                 if ($newFavicon !== null) $created[] = $newFavicon;
+                $newSignature = store_uploaded_image($_FILES['signature_file'] ?? null, 'signature');
+                if ($newSignature !== null) $created[] = $newSignature;
                 $logoPath = $newLogo ?? (!empty($_POST['remove_logo']) ? '' : $oldLogo);
                 $faviconPath = $newFavicon ?? (!empty($_POST['remove_favicon']) ? '' : $oldFavicon);
-                save_settings(['site_title' => $siteTitle, 'slogan' => $slogan, 'mobile_number' => $mobile, 'email' => $email, 'address' => $address, 'website' => $website, 'logo_path' => $logoPath, 'favicon_path' => $faviconPath]);
+                $signaturePath = $newSignature ?? (!empty($_POST['remove_signature']) ? '' : $oldSignature);
+                save_settings(['site_title' => $siteTitle, 'slogan' => $slogan, 'mobile_number' => $mobile, 'email' => $email, 'address' => $address, 'website' => $website, 'logo_path' => $logoPath, 'favicon_path' => $faviconPath, 'signature_path' => $signaturePath]);
                 if ($oldLogo !== $logoPath) delete_uploaded_asset($oldLogo);
                 if ($oldFavicon !== $faviconPath) delete_uploaded_asset($oldFavicon);
+                if ($oldSignature !== $signaturePath) delete_uploaded_asset($oldSignature);
             } catch (Throwable $error) {
                 foreach ($created as $path) delete_uploaded_asset($path);
                 throw $error;
@@ -607,8 +612,8 @@ case 'payment-methods':
     $edit = $editId ? query_one('SELECT * FROM payment_methods WHERE id=?', [$editId]) : false;
     $types = ['bank' => 'ব্যাংক', 'mfs' => 'মোবাইল ব্যাংকিং (MFS)', 'card' => 'কার্ড', 'other' => 'অন্যান্য'];
     begin_page('পেমেন্ট মেথড', $page, 'ব্যাংক, MFS এবং অন্যান্য পেমেন্ট তথ্য ও QR কোড পরিচালনা করুন।');
-    echo '<div class="two-column payment-method-layout"><section class="panel"><div class="panel-heading"><div><span class="eyebrow">PAYMENT CHANNELS</span><h2>পেমেন্ট মেথডসমূহ</h2></div><span class="count-pill">' . count($methods) . ' টি</span></div>';
-    if (!$methods) echo '<div class="empty-state">' . icon('wallet', 34) . '<h3>পেমেন্ট মেথড নেই</h3><p>ডান পাশের ফর্মে ব্যাংক বা MFS তথ্য এবং QR কোড যোগ করুন।</p></div>';
+    echo '<div class="two-column payment-method-layout"><section class="panel payment-channel-panel"><div class="panel-heading"><div><span class="eyebrow">PAYMENT CHANNELS</span><h2>পেমেন্ট মেথডসমূহ</h2></div><span class="count-pill">' . count($methods) . ' টি</span></div>';
+    if (!$methods) echo '<div class="empty-state">' . icon('wallet', 34) . '<h3>পেমেন্ট মেথড নেই</h3><p>বাম পাশের ফর্মে ব্যাংক বা MFS তথ্য এবং QR কোড যোগ করুন।</p></div>';
     else {
         echo '<div class="payment-method-list"><div class="payment-method-table-head"><span></span><span>মেথড</span><span>অ্যাকাউন্ট ও অবস্থা</span><span>QR</span><span>অ্যাকশন</span></div>';
         foreach ($methods as $method) {
@@ -683,10 +688,12 @@ case 'settings':
     if ($tab === 'basic') {
         $logo = uploaded_asset_url(setting('logo_path'));
         $favicon = uploaded_asset_url(setting('favicon_path'));
+        $signature = uploaded_asset_url(setting('signature_path'));
         echo '<section class="panel settings-panel"><div class="section-title"><span class="step">01</span><div><h2>Basic Settings</h2><p>সাইটের পরিচিতি ও যোগাযোগের তথ্য।</p></div></div><form method="post" enctype="multipart/form-data" class="stack-form">' . csrf_field() . '<input type="hidden" name="action" value="save_basic_settings"><div class="form-grid"><label class="field-wide">Site Title <span>*</span><input name="site_title" required maxlength="80" value="' . e(setting('site_title', 'Billflow')) . '" placeholder="আপনার সাইটের নাম"></label><label class="field-wide">Slogan<input name="slogan" maxlength="200" value="' . e(setting('slogan', 'সব ইনভয়েস ও কালেকশন এক জায়গায় রাখুন।')) . '" placeholder="সংক্ষিপ্ত স্লোগান"></label><label>Mobile Number<input name="mobile_number" type="tel" maxlength="25" value="' . e(setting('mobile_number')) . '" placeholder="+880 1XXXXXXXXX"></label><label>Email<input name="site_email" type="email" value="' . e(setting('email')) . '" placeholder="hello@example.com"></label></div>';
         echo '<div class="form-grid settings-extra"><label class="field-wide">অফিসের ঠিকানা <small>(ঐচ্ছিক)</small><textarea name="site_address" rows="2" maxlength="300" placeholder="ইনভয়েসে দেখানোর ঠিকানা">' . e(setting('address')) . '</textarea></label><label class="field-wide">Website <small>(ঐচ্ছিক)</small><input name="site_website" type="url" maxlength="200" value="' . e(setting('website')) . '" placeholder="https://example.com"></label></div>';
         echo '<div class="upload-grid"><div class="upload-card"><div class="upload-card-head"><strong>Logo</strong><small>PNG, JPG বা WebP · সর্বোচ্চ ৩ MB</small></div><div class="upload-preview" data-preview-box="logo"><img id="logo-preview" alt="Logo preview"' . ($logo !== '' ? ' src="' . e($logo) . '"' : ' hidden') . '><span class="upload-placeholder"' . ($logo !== '' ? ' hidden' : '') . '>' . icon('invoice', 29) . '<small>Logo preview</small></span></div><label for="logo-file">Logo আপলোড করুন</label><input id="logo-file" type="file" name="logo_file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" data-preview-target="logo-preview"><p class="upload-hint">পরিবর্তন দেখতে ফাইল বাছুন, তারপর সেভ করুন।</p>' . ($logo !== '' ? '<label class="checkbox-line"><input type="checkbox" name="remove_logo" value="1" data-remove-image="logo-preview"> বর্তমান Logo সরান</label>' : '') . '</div>';
-        echo '<div class="upload-card"><div class="upload-card-head"><strong>Favicon</strong><small>PNG, WebP বা ICO · সর্বোচ্চ ১ MB</small></div><div class="upload-preview favicon-preview" data-preview-box="favicon"><img id="favicon-preview" alt="Favicon preview"' . ($favicon !== '' ? ' src="' . e($favicon) . '"' : ' hidden') . '><span class="upload-placeholder"' . ($favicon !== '' ? ' hidden' : '') . '>' . icon('grid', 27) . '<small>Favicon preview</small></span></div><label for="favicon-file">Favicon আপলোড করুন</label><input id="favicon-file" type="file" name="favicon_file" accept=".png,.webp,.ico,image/png,image/webp,image/x-icon,image/vnd.microsoft.icon" data-preview-target="favicon-preview"><p class="upload-hint">ব্রাউজার ট্যাবে ছোট আইকন হিসেবে দেখা যাবে।</p>' . ($favicon !== '' ? '<label class="checkbox-line"><input type="checkbox" name="remove_favicon" value="1" data-remove-image="favicon-preview"> বর্তমান Favicon সরান</label>' : '') . '</div></div>';
+        echo '<div class="upload-card"><div class="upload-card-head"><strong>Favicon</strong><small>PNG, WebP বা ICO · সর্বোচ্চ ১ MB</small></div><div class="upload-preview favicon-preview" data-preview-box="favicon"><img id="favicon-preview" alt="Favicon preview"' . ($favicon !== '' ? ' src="' . e($favicon) . '"' : ' hidden') . '><span class="upload-placeholder"' . ($favicon !== '' ? ' hidden' : '') . '>' . icon('grid', 27) . '<small>Favicon preview</small></span></div><label for="favicon-file">Favicon আপলোড করুন</label><input id="favicon-file" type="file" name="favicon_file" accept=".png,.webp,.ico,image/png,image/webp,image/x-icon,image/vnd.microsoft.icon" data-preview-target="favicon-preview"><p class="upload-hint">ব্রাউজার ট্যাবে ছোট আইকন হিসেবে দেখা যাবে।</p>' . ($favicon !== '' ? '<label class="checkbox-line"><input type="checkbox" name="remove_favicon" value="1" data-remove-image="favicon-preview"> বর্তমান Favicon সরান</label>' : '') . '</div>';
+        echo '<div class="upload-card"><div class="upload-card-head"><strong>Authorized Signature</strong><small>PNG, JPG বা WebP · সর্বোচ্চ ৩ MB</small></div><div class="upload-preview signature-preview" data-preview-box="signature"><img id="signature-preview" alt="Signature preview"' . ($signature !== '' ? ' src="' . e($signature) . '"' : ' hidden') . '><span class="upload-placeholder"' . ($signature !== '' ? ' hidden' : '') . '>' . icon('invoice', 27) . '<small>Signature preview</small></span></div><label for="signature-file">Signature আপলোড করুন</label><input id="signature-file" type="file" name="signature_file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" data-preview-target="signature-preview"><p class="upload-hint">Invoice-এর signature line-এর উপরে দেখা যাবে।</p>' . ($signature !== '' ? '<label class="checkbox-line"><input type="checkbox" name="remove_signature" value="1" data-remove-image="signature-preview"> বর্তমান Signature সরান</label>' : '') . '</div></div>';
         echo '<div class="settings-actions"><button class="btn btn-primary" type="submit">পরিবর্তন সেভ করুন ' . icon('arrow', 17) . '</button></div></form></section>';
         echo '<aside class="settings-tip panel"><span class="settings-tip-icon">' . icon('grid', 22) . '</span><h3>সাইটের পরিচিতি</h3><p>Site Title সাইডবার, লগইন পেজ ও ইনভয়েসে দেখা যাবে। Slogan সাইডবারে এবং যোগাযোগের তথ্য ইনভয়েসে থাকবে।</p></aside>';
     } else {
