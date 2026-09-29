@@ -11,6 +11,9 @@ function invoice_pdf_html(array $invoice, array $items, array $methods, string $
     $website = setting('website');
     $logo = uploaded_asset_url(setting('logo_path'));
     $logoFile = $logo !== '' ? str_replace('\\', '/', __DIR__ . '/' . $logo) : '';
+    $showLogo = setting('pdf_show_logo', '1') === '1';
+    $showTitle = setting('pdf_show_title', '1') === '1';
+    $showSlogan = setting('pdf_show_slogan', '1') === '1';
     $signature = uploaded_asset_url(setting('signature_path'));
     $signatureFile = $signature !== '' ? str_replace('\\', '/', __DIR__ . '/' . $signature) : '';
     $due = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
@@ -23,9 +26,9 @@ body{font-family:<?= e($fontFamily) ?>;font-size:8pt;color:#1b2c44}
 h1,h2,h3,p{margin:0}
 table{border-collapse:collapse;width:100%}
 .header{margin-bottom:4mm}.header td{vertical-align:top}.header .invoice-cell{width:42%;padding-left:6mm;text-align:right}.header .invoice-cell .invoice-box{text-align:left}
-.brand-logo{max-width:19mm;max-height:19mm}
+.brand-stack{text-align:left}.brand-logo{display:block;max-width:28mm;max-height:20mm;margin:0 0 1.2mm}
 .brand-title{font-size:19pt;font-weight:bold;color:#183e73;line-height:1.1}
-.brand-slogan{font-size:8pt;color:#315a81}
+.brand-slogan{margin-top:.7mm;font-size:8pt;color:#315a81}
 .contact{margin-top:2mm;font-size:7.5pt;line-height:1.45;color:#31516e}.contact-row{white-space:nowrap}.contact-item{display:inline-block;margin-right:4mm}.contact-icon{display:inline-block;width:3.8mm;font-family:dejavusans;font-size:7pt;color:#0d6a9f}
 .invoice-box{background:#eaf6fc;border-radius:2mm;padding:3mm}
 .invoice-box h1{font-size:16pt;color:#154575;text-align:center;border-bottom:1px solid #3e8abd;padding-bottom:1mm;margin-bottom:1mm}
@@ -57,10 +60,11 @@ table{border-collapse:collapse;width:100%}
 </style></head><body>
 <table class="header"><tr>
     <td style="width:58%">
-        <table style="width:auto"><tr>
-            <?php if ($logoFile !== ''): ?><td style="width:26mm;padding-right:3mm"><img class="brand-logo" src="<?= e($logoFile) ?>"></td><?php endif; ?>
-            <td><div class="brand-title"><?= e($siteTitle) ?></div><?php if ($slogan !== ''): ?><div class="brand-slogan"><?= e($slogan) ?></div><?php endif; ?></td>
-        </tr></table>
+        <div class="brand-stack">
+            <?php if ($showLogo && $logoFile !== ''): ?><img class="brand-logo" src="<?= e($logoFile) ?>"><?php endif; ?>
+            <?php if ($showTitle): ?><div class="brand-title"><?= e($siteTitle) ?></div><?php endif; ?>
+            <?php if ($showSlogan && $slogan !== ''): ?><div class="brand-slogan"><?= e($slogan) ?></div><?php endif; ?>
+        </div>
         <div class="contact">
             <?php if ($address !== ''): ?><?= nl2br(e($address)) ?><br><?php endif; ?>
             <?php if ($mobile !== '' || $email !== ''): ?><div class="contact-row">
