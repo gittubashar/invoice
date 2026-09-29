@@ -26,7 +26,7 @@ body{font-family:<?= e($fontFamily) ?>;font-size:8pt;color:#1b2c44}
 h1,h2,h3,p{margin:0}
 table{border-collapse:collapse;width:100%}
 .header{margin-bottom:4mm}.header td{vertical-align:top}.header .invoice-cell{width:42%;padding-left:6mm;text-align:right}.header .invoice-cell .invoice-box{text-align:left}
-.brand-stack{text-align:left}.brand-logo{display:block;max-width:28mm;max-height:20mm;margin:0 0 1.2mm}
+.brand-stack{text-align:left}.brand-logo{display:block;width:auto;height:75px;min-height:75px;max-width:220px;margin:0 0 1.2mm}
 .brand-title{font-size:19pt;font-weight:bold;color:#183e73;line-height:1.1}
 .brand-slogan{margin-top:.7mm;font-size:8pt;color:#315a81}
 .contact{margin-top:2mm;font-size:7.5pt;line-height:1.45;color:#31516e}.contact-row{white-space:nowrap}.contact-item{display:inline-block;margin-right:4mm}.contact-icon{display:inline-block;width:3.8mm;font-family:dejavusans;font-size:7pt;color:#0d6a9f}
