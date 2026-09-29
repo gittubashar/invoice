@@ -105,7 +105,7 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
 
     <section class="sheet-bottom">
         <div class="invoice-note"><h2>নোট</h2><ol><li>পেমেন্ট করার সময় ইনভয়েস নম্বর উল্লেখ করুন।</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div>
-        <div class="signature"><?php if ($signature !== ''): ?><img class="signature-image" src="<?= e($signature) ?>" alt="Authorized Signature"><?php endif; ?><span class="signature-line"></span><strong>Authorized Signature</strong><small><?= e($siteTitle) ?></small></div>
+        <div class="signature"><?php if ($signature !== ''): ?><img class="signature-image" src="<?= e($signature) ?>" alt="Authorized Signature"><?php endif; ?><span class="signature-line"></span><div class="signature-caption">Authorized Signature</div><div class="signature-site"><?= e($siteTitle) ?></div></div>
     </section>
     <footer class="sheet-footer"><?= e($slogan !== '' ? $slogan : 'আপনার আস্থায় আমাদের পথচলা') ?><?php if ($website !== ''): ?> &nbsp; | &nbsp; <?= e($website) ?><?php endif; ?></footer>
 </main>

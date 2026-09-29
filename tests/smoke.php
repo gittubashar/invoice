@@ -106,6 +106,15 @@ try {
         create_client_account(['client_name' => 'Duplicate Client', 'client_phone' => '01812345678', 'client_email' => 'other@example.test']);
         throw new RuntimeException('Duplicate client phone should be rejected');
     } catch (InvalidArgumentException $expected) {}
+    update_client_account($manualClientId, ['client_name' => 'Updated Manual Client', 'company_name' => 'Updated Co', 'client_address' => 'Chattogram', 'client_phone' => '01812345679', 'client_email' => 'updated-manual@example.test']);
+    $updatedManualClient = query_one('SELECT * FROM clients WHERE id=?', [$manualClientId]);
+    expect($updatedManualClient['name'] === 'Updated Manual Client' && $updatedManualClient['phone'] === '01812345679' && $updatedManualClient['address'] === 'Chattogram', 'Client update must persist all editable fields');
+    delete_client_account($manualClientId);
+    expect(query_one('SELECT id FROM clients WHERE id=?', [$manualClientId]) === false, 'Standalone client must be deletable');
+    try {
+        delete_client_account((int)query_one('SELECT client_id FROM invoices WHERE id=?', [$first])['client_id']);
+        throw new RuntimeException('Client with invoice history should not be deletable');
+    } catch (InvalidArgumentException $expected) {}
     collect_payment($first, '100', 'cash', '', '', date('Y-m-d'));
     expect(invoice_status(invoice_rows('WHERE i.id=?', [$first])[0]) === 'paid', 'Edited invoice can be fully collected');
     $recurringInvoice = query_one('SELECT issue_date, due_date, recurrence_id FROM invoices WHERE id=?', [$second]);

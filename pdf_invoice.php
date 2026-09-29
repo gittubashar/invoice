@@ -26,7 +26,7 @@ body{font-family:<?= e($fontFamily) ?>;font-size:8pt;color:#1b2c44}
 h1,h2,h3,p{margin:0}
 table{border-collapse:collapse;width:100%}
 .header{margin-bottom:4mm}.header td{vertical-align:top}.header .invoice-cell{width:42%;padding-left:6mm;text-align:right}.header .invoice-cell .invoice-box{text-align:left}
-.brand-stack{text-align:left}.brand-logo{display:block;width:auto;height:75px;min-height:75px;max-width:220px;margin:0 0 1.2mm}
+.brand-stack{text-align:left}.brand-logo{display:block;width:auto;height:60px;max-width:220px;margin:0 0 1.2mm}
 .brand-title{font-size:19pt;font-weight:bold;color:#183e73;line-height:1.1}
 .brand-slogan{margin-top:.7mm;font-size:8pt;color:#315a81}
 .contact{margin-top:2mm;font-size:7.5pt;line-height:1.45;color:#31516e}.contact-row{white-space:nowrap}.contact-item{display:inline-block;margin-right:4mm}.contact-icon{display:inline-block;width:3.8mm;font-family:dejavusans;font-size:7pt;color:#0d6a9f}
@@ -40,7 +40,7 @@ table{border-collapse:collapse;width:100%}
 .items th{background:#135c90;color:white;padding:1.5mm 1.5mm;font-size:8pt}
 .items td{padding:1mm 1.5mm;border:0.2mm solid #cddfeb;vertical-align:top;font-size:8pt}
 .items .stripe td{background:#edf7fd}.items .num{text-align:center;width:7%}.items .qty{text-align:center;width:12%}.items .money{text-align:right;width:18%}
-.items small{display:block;color:#69849a;font-size:7pt}
+.item-name{display:block;font-weight:bold}.item-description{display:block;margin-top:.5mm;color:#69849a;font-size:7pt;line-height:1.25}
 .totals-wrap{margin:1.5mm 0 2mm}.totals-wrap td{vertical-align:bottom}
 .thanks{color:#0d5489;font-size:10pt;font-style:italic}
 .totals{background:#eef8fd}.totals td{padding:1mm 2mm;border-bottom:0.2mm solid #b7d9e9;font-size:8pt}.totals td:last-child{text-align:right;font-weight:bold}
@@ -55,8 +55,7 @@ table{border-collapse:collapse;width:100%}
 .payment-card img{width:14mm;height:14mm}
 .note-signature{margin-top:9mm}.note-signature td{vertical-align:bottom}
 .note h2{font-size:9pt;color:#0d5489}.note ol{margin:.5mm 0 0;padding-left:5mm}.note li{font-size:7pt;line-height:1.3}
-.signature{text-align:center;font-size:7pt}.signature-image{display:block;max-width:35mm;max-height:13mm;margin:0 auto .5mm}.signature-line{width:100%;border-top:0.3mm solid #234a7a;margin:0 auto .5mm}.signature strong,.signature small{display:block;text-align:center}
-.footer{margin-top:2mm;border-top:0.3mm solid #478ab9;padding-top:1mm;text-align:center;color:#376086;font-size:6.5pt}
+.signature{text-align:center;font-size:7pt}.signature-image{display:block;max-width:35mm;max-height:13mm;margin:0 auto .5mm}.signature-line{width:100%;border-top:0.3mm solid #234a7a;margin:0 auto 1mm}.signature-caption,.signature-site{display:block;width:100%;text-align:center;line-height:1.35}.signature-caption{font-weight:bold}.signature-site{margin-top:.4mm;color:#466385;font-size:6.5pt}
 </style></head><body>
 <table class="header"><tr>
     <td style="width:58%">
@@ -93,7 +92,7 @@ table{border-collapse:collapse;width:100%}
 </div>
 <table class="items"><thead><tr><th class="num">#</th><th>বিবরণ</th><th class="qty">পরিমাণ</th><th class="money">একক মূল্য (টাকা)</th><th class="money">মোট (টাকা)</th></tr></thead><tbody>
 <?php foreach ($items as $index => $item): ?>
-    <tr class="<?= $index % 2 ? 'stripe' : '' ?>"><td class="num"><?= $index + 1 ?></td><td><strong><?= e($item['name']) ?></strong><?php if ($item['description'] !== ''): ?><small><?= e($item['description']) ?></small><?php endif; ?></td><td class="qty"><?= e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) ?></td><td class="money"><?= e(number_format((int)$item['unit_price_cents'] / 100, 2)) ?></td><td class="money"><?= e(number_format((int)$item['total_cents'] / 100, 2)) ?></td></tr>
+    <tr class="<?= $index % 2 ? 'stripe' : '' ?>"><td class="num"><?= $index + 1 ?></td><td><div class="item-name"><?= e($item['name']) ?></div><?php if ($item['description'] !== ''): ?><div class="item-description"><?= e($item['description']) ?></div><?php endif; ?></td><td class="qty"><?= e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) ?></td><td class="money"><?= e(number_format((int)$item['unit_price_cents'] / 100, 2)) ?></td><td class="money"><?= e(number_format((int)$item['total_cents'] / 100, 2)) ?></td></tr>
 <?php endforeach; ?>
 </tbody></table>
 <table class="totals-wrap"><tr><td style="width:54%"><div class="thanks">আপনার আস্থাই<br>আমাদের অনুপ্রেরণা।</div></td><td style="width:46%">
@@ -115,8 +114,7 @@ table{border-collapse:collapse;width:100%}
     <?php endforeach; ?>
     <?php if ($methods): ?><?php $remainder = count($methods) % 3; for ($blank = $remainder; $remainder !== 0 && $blank < 3; $blank++): ?><td></td><?php endfor; ?></tr></table><?php endif; ?>
 </div>
-<table class="note-signature"><tr><td style="width:70%"><div class="note"><h2>নোট</h2><ol><li>পেমেন্ট করার সময় ইনভয়েস নম্বর উল্লেখ করুন।</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div></td><td style="width:30%;text-align:center"><div class="signature"><?php if ($signatureFile !== ''): ?><img class="signature-image" src="<?= e($signatureFile) ?>"><?php endif; ?><div class="signature-line"></div><strong>Authorized Signature</strong><small><?= e($siteTitle) ?></small></div></td></tr></table>
-<div class="footer"><?= e($slogan !== '' ? $slogan : 'আপনার আস্থায় আমাদের পথচলা') ?><?php if ($website !== ''): ?> &nbsp; | &nbsp; <?= e($website) ?><?php endif; ?></div>
+<table class="note-signature"><tr><td style="width:70%"><div class="note"><h2>নোট</h2><ol><li>পেমেন্ট করার সময় ইনভয়েস নম্বর উল্লেখ করুন।</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div></td><td style="width:30%;text-align:center"><div class="signature"><?php if ($signatureFile !== ''): ?><img class="signature-image" src="<?= e($signatureFile) ?>"><?php endif; ?><div class="signature-line"></div><div class="signature-caption">Authorized Signature</div><div class="signature-site"><?= e($siteTitle) ?></div></div></td></tr></table>
 </body></html>
 <?php
     return (string)ob_get_clean();
@@ -144,7 +142,8 @@ function render_invoice_pdf(array $invoice, array $items, array $methods): strin
         'margin_left' => 10,
         'margin_right' => 10,
         'margin_top' => 7,
-        'margin_bottom' => 7,
+        'margin_bottom' => 14,
+        'margin_footer' => 4,
         'tempDir' => $tempDir,
         'fontDir' => $fontDirs,
         'fontdata' => $fontData,
@@ -152,6 +151,10 @@ function render_invoice_pdf(array $invoice, array $items, array $methods): strin
     ]);
     $mpdf->SetTitle((string)$invoice['number']);
     $mpdf->SetAuthor(setting('site_title', 'Billflow'));
+    $footerSlogan = setting('slogan') !== '' ? setting('slogan') : 'আপনার আস্থায় আমাদের পথচলা';
+    $footerWebsite = setting('website');
+    $footerText = e($footerSlogan) . ($footerWebsite !== '' ? ' &nbsp; | &nbsp; ' . e($footerWebsite) : '');
+    $mpdf->SetHTMLFooter('<div style="border-top:0.3mm solid #478ab9;padding-top:1.4mm;text-align:center;color:#376086;font-family:hindsiliguri;font-size:6.5pt;letter-spacing:.03em">' . $footerText . '</div>');
     $mpdf->WriteHTML(invoice_pdf_html($invoice, $items, $methods));
     return $mpdf->OutputBinaryData();
 }

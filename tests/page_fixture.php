@@ -7,8 +7,17 @@ putenv('INVOICE_DB_PATH=' . $path);
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_GET['page'] = $argv[1] ?? 'payment-methods';
 if ($_GET['page'] === 'clients') $_GET['add'] = 1;
-if ($_GET['page'] === 'collections') {
+if (in_array($_GET['page'], ['collections', 'client'], true)) {
     require_once dirname(__DIR__) . '/db.php';
+}
+if ($_GET['page'] === 'client') {
+    $_GET['id'] = create_client_account([
+        'client_name' => 'Editable Client', 'company_name' => 'Fixture Co', 'client_address' => 'Dhaka',
+        'client_phone' => '01887654321', 'client_email' => 'editable@example.test',
+    ]);
+    $_GET['edit'] = 1;
+}
+if ($_GET['page'] === 'collections') {
     $_GET['id'] = create_invoice([
         'client_name' => 'Collection Client', 'client_phone' => '01712345678', 'invoice_type' => 'one_time',
         'issue_date' => date('Y-m-d'), 'due_date' => add_days(date('Y-m-d'), 7),
@@ -27,6 +36,7 @@ if (!str_contains($html, '<!doctype html>')) throw new RuntimeException('Page di
 if ($_GET['page'] === 'payment-methods' && (!str_contains($html, 'name="qr_file"') || !str_contains($html, 'name="account_number"'))) throw new RuntimeException('Payment method form did not render');
 if ($_GET['page'] === 'new' && !str_contains($html, 'name="payment_method_id"')) throw new RuntimeException('Invoice payment method selector did not render');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"'))) throw new RuntimeException('Client creation form did not render');
+if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client'))) throw new RuntimeException('Client update/delete controls did not render');
 if ($_GET['page'] === 'collections' && (!str_contains($html, 'name="action" value="collect_invoice_collection"') || !str_contains($html, 'value="partial"') || !str_contains($html, 'value="full"'))) throw new RuntimeException('Invoice collection form did not render');
 echo "Page render passed: {$_GET['page']}\n";
 session_destroy();

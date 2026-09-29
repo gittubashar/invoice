@@ -661,6 +661,35 @@ function create_client_account(array $input): int
     return (int)$pdo->lastInsertId();
 }
 
+function update_client_account(int $id, array $input): void
+{
+    $client = query_one('SELECT id FROM clients WHERE id=?', [$id]);
+    if (!$client) throw new InvalidArgumentException('ক্লায়েন্ট পাওয়া যায়নি।');
+    $name = trim((string)($input['client_name'] ?? ''));
+    $companyName = trim((string)($input['company_name'] ?? ''));
+    $address = trim((string)($input['client_address'] ?? ''));
+    $phone = normalize_phone((string)($input['client_phone'] ?? ''));
+    $email = mb_strtolower(trim((string)($input['client_email'] ?? '')));
+    if ($name === '' || mb_strlen($name) > 150) throw new InvalidArgumentException('ক্লায়েন্টের নাম ১৫০ অক্ষরের মধ্যে লিখুন।');
+    if (mb_strlen($companyName) > 150) throw new InvalidArgumentException('কোম্পানির নাম ১৫০ অক্ষরের মধ্যে লিখুন।');
+    if (mb_strlen($address) > 300) throw new InvalidArgumentException('ঠিকানা ৩০০ অক্ষরের মধ্যে লিখুন।');
+    if ($email !== '' && (!filter_var($email, FILTER_VALIDATE_EMAIL) || mb_strlen($email) > 190)) throw new InvalidArgumentException('সঠিক ইমেইল লিখুন।');
+    if (query_one('SELECT id FROM clients WHERE phone=? AND id<>?', [$phone, $id])) throw new InvalidArgumentException('এই মোবাইল নম্বরে অন্য একটি ক্লায়েন্ট আছে।');
+    if ($email !== '' && query_one("SELECT id FROM clients WHERE lower(COALESCE(email, ''))=? AND id<>?", [$email, $id])) throw new InvalidArgumentException('এই ইমেইলে অন্য একটি ক্লায়েন্ট আছে।');
+    db()->prepare('UPDATE clients SET name=?, company_name=?, address=?, phone=?, email=? WHERE id=?')->execute([$name, $companyName, $address, $phone, $email !== '' ? $email : null, $id]);
+}
+
+function delete_client_account(int $id): void
+{
+    if (!query_one('SELECT id FROM clients WHERE id=?', [$id])) throw new InvalidArgumentException('ক্লায়েন্ট পাওয়া যায়নি।');
+    $invoiceCount = (int)(query_one('SELECT COUNT(*) total FROM invoices WHERE client_id=?', [$id])['total'] ?? 0);
+    $recurrenceCount = (int)(query_one('SELECT COUNT(*) total FROM recurrences WHERE client_id=?', [$id])['total'] ?? 0);
+    if ($invoiceCount > 0 || $recurrenceCount > 0) {
+        throw new InvalidArgumentException('এই ক্লায়েন্টের invoice বা recurring schedule আছে, তাই হিসাব সংরক্ষণের জন্য মুছে ফেলা যাবে না।');
+    }
+    db()->prepare('DELETE FROM clients WHERE id=?')->execute([$id]);
+}
+
 function parse_items(array $input, bool $allowInactiveServices = false): array
 {
     $services = array_column(query_all('SELECT * FROM services' . ($allowInactiveServices ? '' : ' WHERE active = 1')), null, 'id');
