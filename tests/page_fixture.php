@@ -7,8 +7,15 @@ putenv('INVOICE_DB_PATH=' . $path);
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_GET['page'] = $argv[1] ?? 'payment-methods';
 if ($_GET['page'] === 'clients') $_GET['add'] = 1;
-if (in_array($_GET['page'], ['collections', 'client', 'client-ledger', 'receipt', 'new-prefill'], true)) {
+if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard', 'collections', 'client', 'client-ledger', 'receipt', 'new-prefill'], true)) {
     require_once dirname(__DIR__) . '/db.php';
+}
+if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard'], true)) {
+    $dashboardInvoice = create_invoice([
+        'client_name'=>'Dashboard Client','client_phone'=>'01512345678','invoice_type'=>'recurring','frequency'=>'monthly',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Dashboard subscription'],'item_description'=>['Monthly service'],'item_qty'=>['1'],'item_price'=>['1000'],
+    ]);
+    collect_payment($dashboardInvoice, '250', 'cash', 'DASHBOARD', '', date('Y-m-d'));
 }
 if ($_GET['page'] === 'new-prefill') {
     $_GET['page'] = 'new';
@@ -46,6 +53,7 @@ ob_start();
 require dirname(__DIR__) . '/index.php';
 $html = (string)ob_get_clean();
 if (!str_contains($html, '<!doctype html>')) throw new RuntimeException('Page did not render');
+if (str_contains($html, 'Simple billing, clear accounts') || str_contains($html, 'class="sidebar-note"')) throw new RuntimeException('Removed sidebar information card rendered');
 if ($_GET['page'] === 'payment-methods' && (!str_contains($html, 'name="qr_file"') || !str_contains($html, 'name="account_number"'))) throw new RuntimeException('Payment method form did not render');
 if ($_GET['page'] === 'new' && !str_contains($html, 'name="payment_method_id"')) throw new RuntimeException('Invoice payment method selector did not render');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"'))) throw new RuntimeException('Client creation form did not render');
@@ -56,15 +64,21 @@ if ($_GET['page'] === 'client-ledger' && !str_contains($html, 'LEDGER HISTORY'))
 if ($_GET['page'] === 'receipt' && !str_contains($html, 'MONEY RECEIPT')) throw new RuntimeException('Money receipt did not render');
 $modulePages = [
     'invoice-dashboard' => ['Invoice', 'Create Invoice', 'Recurring Billing'],
-    'clients-dashboard' => ['Clients', 'Client Ledger'],
-    'services-dashboard' => ['Services', 'Service Catalog'],
-    'payments-dashboard' => ['Payment Methods', 'Payment Methods'],
-    'settings-dashboard' => ['Settings', 'Basic &amp; SMTP Settings'],
+    'clients' => ['Clients', 'Client Ledger'],
+    'services' => ['Services', 'Service Catalog'],
+    'payment-methods' => ['Payment Methods'],
+    'settings' => ['Settings', 'Basic Settings', 'SMTP'],
 ];
 if (isset($modulePages[$_GET['page']])) {
     if (!str_contains($html, 'class="top-modules"') || !str_contains($html, 'class="active-module"')) throw new RuntimeException('Module navigation did not render');
     if (str_contains($html, 'class="module-switcher"')) throw new RuntimeException('Module switcher must not render in the sidebar');
+    if (str_contains($html, '<span>Overview</span>')) throw new RuntimeException('Redundant module overview link rendered in the sidebar');
     foreach ($modulePages[$_GET['page']] as $expected) if (!str_contains($html, $expected)) throw new RuntimeException('Missing module control: ' . $expected);
+}
+if ($_GET['page'] === 'invoice-dashboard') {
+    foreach (['Quick Actions', 'COLLECTION TREND', 'INVOICE STATUS', 'Upcoming Recurring', 'Latest Collections'] as $expected) if (!str_contains($html, $expected)) throw new RuntimeException('Missing invoice dashboard section: ' . $expected);
+    foreach (['clients', 'services', 'payment-methods', 'settings'] as $target) if (!str_contains($html, 'href="' . e(url($target)) . '"')) throw new RuntimeException('Module does not link directly to control page: ' . $target);
+    foreach (['clients-dashboard', 'services-dashboard', 'payments-dashboard', 'settings-dashboard'] as $legacyTarget) if (str_contains($html, 'href="' . e(url($legacyTarget)) . '"')) throw new RuntimeException('Module still links to redundant overview page: ' . $legacyTarget);
 }
 echo "Page render passed: {$_GET['page']}\n";
 session_destroy();

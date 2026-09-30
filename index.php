@@ -352,10 +352,10 @@ function module_definitions(): array
 {
     return [
         'invoice' => ['label' => 'Invoice', 'icon' => 'invoice', 'home' => 'invoice-dashboard', 'pages' => ['invoice-dashboard','invoices','new','edit','invoice','print','pdf','download','collections','receipt','recurring']],
-        'clients' => ['label' => 'Clients', 'icon' => 'users', 'home' => 'clients-dashboard', 'pages' => ['clients-dashboard','clients','client','client-ledger']],
-        'services' => ['label' => 'Services', 'icon' => 'box', 'home' => 'services-dashboard', 'pages' => ['services-dashboard','services']],
-        'payments' => ['label' => 'Payment Methods', 'icon' => 'wallet', 'home' => 'payments-dashboard', 'pages' => ['payments-dashboard','payment-methods']],
-        'settings' => ['label' => 'Settings', 'icon' => 'settings', 'home' => 'settings-dashboard', 'pages' => ['settings-dashboard','settings']],
+        'clients' => ['label' => 'Clients', 'icon' => 'users', 'home' => 'clients', 'pages' => ['clients-dashboard','clients','client','client-ledger']],
+        'services' => ['label' => 'Services', 'icon' => 'box', 'home' => 'services', 'pages' => ['services-dashboard','services']],
+        'payments' => ['label' => 'Payment Methods', 'icon' => 'wallet', 'home' => 'payment-methods', 'pages' => ['payments-dashboard','payment-methods']],
+        'settings' => ['label' => 'Settings', 'icon' => 'settings', 'home' => 'settings', 'pages' => ['settings-dashboard','settings']],
     ];
 }
 
@@ -368,11 +368,11 @@ function active_module(string $page): string
 function module_sidebar_links(string $module): array
 {
     return match ($module) {
-        'clients' => [['clients-dashboard','Overview','grid'], ['clients','Clients','users'], ['client-ledger','Client Ledger','invoice']],
-        'services' => [['services-dashboard','Overview','grid'], ['services','Service Catalog','box']],
-        'payments' => [['payments-dashboard','Overview','grid'], ['payment-methods','Payment Methods','wallet']],
-        'settings' => [['settings-dashboard','Overview','grid'], ['settings','Basic & SMTP Settings','settings']],
-        default => [['invoice-dashboard','Overview','grid'], ['invoices','Invoices','invoice'], ['new','Create Invoice','plus'], ['collections','Collections','wallet'], ['recurring','Recurring Billing','repeat']],
+        'clients' => [['clients','Clients','users'], ['client-ledger','Client Ledger','invoice']],
+        'services' => [['services','Service Catalog','box']],
+        'payments' => [['payment-methods','Payment Methods','wallet']],
+        'settings' => [['settings','Basic Settings','settings',['tab'=>'basic']], ['settings','SMTP','settings',['tab'=>'smtp']]],
+        default => [['invoice-dashboard','Dashboard','grid'], ['invoices','Invoices','invoice'], ['new','Create Invoice','plus'], ['collections','Collections','wallet'], ['recurring','Recurring Billing','repeat']],
     };
 }
 
@@ -384,16 +384,18 @@ function begin_page(string $title, string $page, string $subtitle = ''): void
     $currentModule = $modules[$moduleKey];
     $links = module_sidebar_links($moduleKey);
     $siteTitle = setting('site_title', 'Billflow');
-    $slogan = setting('slogan', 'Keep every invoice and collection in one place.');
     echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#123637"><title>' . e($title) . ' · ' . e($siteTitle) . '</title>' . favicon_tag() . '<link rel="stylesheet" href="' . e(versioned_asset('assets/app.css')) . '"></head><body><div class="app-shell">';
     echo '<aside class="sidebar" id="sidebar"><a class="brand" href="' . e(url('invoice-dashboard')) . '">' . brand_mark(23) . '<span class="brand-name">' . e($siteTitle) . '<span class="brand-dot">.</span><small>BUSINESS WORKSPACE</small></span></a>';
     echo '<div class="active-module">' . icon($currentModule['icon'], 22) . '<span><small>CURRENT MODULE</small><strong>' . e($currentModule['label']) . '</strong></span></div>';
     echo '<div class="nav-caption">WORKSPACE</div><nav class="nav-links">';
-    foreach ($links as [$target, $label, $symbol]) {
+    foreach ($links as $link) {
+        [$target, $label, $symbol] = $link;
+        $params = $link[3] ?? [];
         $active = $page === $target || (in_array($page, ['invoice', 'edit'], true) && $target === 'invoices') || ($page === 'client' && $target === 'clients') || ($page === 'receipt' && $target === 'collections');
-        echo '<a class="nav-link' . ($active ? ' active' : '') . '" href="' . e(url($target)) . '">' . icon($symbol) . '<span>' . e($label) . '</span></a>';
+        if ($target === 'settings') $active = $page === 'settings' && (string)($_GET['tab'] ?? 'basic') === (string)($params['tab'] ?? 'basic');
+        echo '<a class="nav-link' . ($active ? ' active' : '') . '" href="' . e(url($target, $params)) . '">' . icon($symbol) . '<span>' . e($label) . '</span></a>';
     }
-    echo '</nav><div class="sidebar-bottom"><div class="sidebar-note"><span class="note-icon">✦</span><strong>Simple billing, clear accounts</strong><p>' . e($slogan) . '</p></div><div class="profile"><span class="avatar">' . e(mb_substr($admin['name'] ?? 'A', 0, 1)) . '</span><span class="profile-copy"><strong>' . e($admin['name'] ?? 'Admin') . '</strong><small>' . (($admin['role'] ?? '') === 'super_admin' ? 'Super Admin' : 'Admin') . '</small></span><form method="post">' . csrf_field() . '<input type="hidden" name="action" value="logout"><button type="submit" title="Log Out" class="icon-button">' . icon('logout', 18) . '</button></form></div></div></aside>';
+    echo '</nav><div class="sidebar-bottom"><div class="profile"><span class="avatar">' . e(mb_substr($admin['name'] ?? 'A', 0, 1)) . '</span><span class="profile-copy"><strong>' . e($admin['name'] ?? 'Admin') . '</strong><small>' . (($admin['role'] ?? '') === 'super_admin' ? 'Super Admin' : 'Admin') . '</small></span><form method="post">' . csrf_field() . '<input type="hidden" name="action" value="logout"><button type="submit" title="Log Out" class="icon-button">' . icon('logout', 18) . '</button></form></div></div></aside>';
     echo '<div class="mobile-backdrop" data-close-menu></div><main class="main"><header class="topbar"><button type="button" class="mobile-menu icon-button" data-menu-toggle aria-label="Open menu">' . icon('menu') . '</button><nav class="top-modules" aria-label="Business modules">';
     foreach ($modules as $key => $module) echo '<a class="top-module' . ($key === $moduleKey ? ' active' : '') . '" href="' . e(url($module['home'])) . '">' . icon($module['icon'], 20) . '<span>' . e($module['label']) . '</span></a>';
     echo '</nav><div class="topbar-right"><span class="today-label">' . e(date('d M Y')) . '</span><a class="btn btn-primary btn-sm" href="' . e(url('new')) . '">' . icon('plus', 17) . ' New Invoice</a></div></header><div class="content">';
@@ -454,27 +456,93 @@ case 'client-search':
 
 case 'dashboard':
 case 'invoice-dashboard':
-    $invoiceStats = query_one('SELECT COUNT(*) invoice_count, COALESCE(SUM(total_cents),0) billed FROM invoices');
-    $collected = query_one('SELECT COALESCE(SUM(amount_cents),0) total, COALESCE(SUM(discount_cents),0) discounts FROM payments');
-    $invoices = invoice_rows('', [], 'i.id DESC', 6);
-    begin_page('Invoice Overview', $page, 'Invoices, collections, and recurring billing.');
-    echo '<div class="stats-grid"><div class="stat-card"><span class="stat-icon stat-icon-mint">' . icon('invoice',22) . '</span><span class="stat-label">Total Invoices</span><strong>' . number_format((int)$invoiceStats['invoice_count']) . '</strong></div><div class="stat-card"><span class="stat-icon stat-icon-blue">' . icon('wallet',22) . '</span><span class="stat-label">Collected</span><strong>' . format_money((int)$collected['total']) . '</strong></div><div class="stat-card"><span class="stat-icon stat-icon-peach">' . icon('clock',22) . '</span><span class="stat-label">Outstanding</span><strong>' . format_money(max(0,(int)$invoiceStats['billed']-(int)$collected['total']-(int)$collected['discounts'])) . '</strong></div></div><section class="panel"><div class="panel-heading"><h2>Recent Invoices</h2><a class="text-link" href="' . e(url('invoices')) . '">View All</a></div>'; invoice_table($invoices); echo '</section>';
+    $period = (int)($_GET['period'] ?? 30);
+    if (!in_array($period, [7, 30, 90], true)) $period = 30;
+    $today = date('Y-m-d');
+    $periodStart = date('Y-m-d', strtotime('-' . ($period - 1) . ' days'));
+    $monthStart = date('Y-m-01');
+    $allInvoices = invoice_rows('', [], 'i.id DESC', 5000);
+    $invoices = array_slice($allInvoices, 0, 6);
+    $totalBilled = array_sum(array_column($allInvoices, 'total_cents'));
+    $totalSettled = array_sum(array_column($allInvoices, 'paid_cents'));
+    $totalOutstanding = max(0, $totalBilled - $totalSettled);
+    $cashStats = query_one('SELECT COALESCE(SUM(amount_cents),0) collected, COALESCE(SUM(discount_cents),0) discounts FROM payments');
+    $monthBilled = array_sum(array_column(array_filter($allInvoices, static fn(array $row): bool => $row['issue_date'] >= date('Y-m-01')), 'total_cents'));
+    $monthCollected = (int)(query_one('SELECT COALESCE(SUM(amount_cents),0) total FROM payments WHERE paid_at >= ?', [$monthStart])['total'] ?? 0);
+    $collectionRate = $totalBilled > 0 ? min(100, round(($totalSettled / $totalBilled) * 100, 1)) : 0;
+    $statusCounts = ['paid' => 0, 'partial' => 0, 'overdue' => 0, 'unpaid' => 0];
+    $overdueAmount = 0;
+    $dueSoonAmount = 0;
+    $dueSoonDate = date('Y-m-d', strtotime('+7 days'));
+    foreach ($allInvoices as $dashboardInvoice) {
+        $dashboardStatus = invoice_status($dashboardInvoice);
+        $statusCounts[$dashboardStatus]++;
+        $balance = max(0, (int)$dashboardInvoice['total_cents'] - (int)$dashboardInvoice['paid_cents']);
+        if ($dashboardStatus === 'overdue') $overdueAmount += $balance;
+        if ($dashboardStatus !== 'paid' && $dashboardInvoice['due_date'] >= $today && $dashboardInvoice['due_date'] <= $dueSoonDate) $dueSoonAmount += $balance;
+    }
+    $activeRecurring = (int)(query_one("SELECT COUNT(*) total FROM recurrences WHERE status='active'")['total'] ?? 0);
+    $recentPayments = query_all('SELECT p.*, i.number invoice_number, i.billing_name client_name FROM payments p JOIN invoices i ON i.id=p.invoice_id ORDER BY p.paid_at DESC, p.id DESC LIMIT 6');
+    $upcomingRecurring = query_all("SELECT r.id,r.frequency,r.next_issue_date,c.name client_name,COALESCE((SELECT SUM(ROUND(ri.quantity * ri.unit_price_cents)) FROM recurrence_items ri WHERE ri.recurrence_id=r.id),0) amount_cents FROM recurrences r JOIN clients c ON c.id=r.client_id WHERE r.status='active' ORDER BY r.next_issue_date, r.id LIMIT 5");
+    $trendRows = query_all('SELECT paid_at, SUM(amount_cents) amount_cents FROM payments WHERE paid_at >= ? GROUP BY paid_at ORDER BY paid_at', [$periodStart]);
+    $trendByDate = [];
+    foreach ($trendRows as $trendRow) $trendByDate[$trendRow['paid_at']] = (int)$trendRow['amount_cents'];
+    $bucketSize = max(1, (int)ceil($period / 12));
+    $trendBuckets = [];
+    for ($offset = 0; $offset < $period; $offset += $bucketSize) {
+        $bucketStart = date('Y-m-d', strtotime($periodStart . ' +' . $offset . ' days'));
+        $bucketEndOffset = min($period - 1, $offset + $bucketSize - 1);
+        $bucketEnd = date('Y-m-d', strtotime($periodStart . ' +' . $bucketEndOffset . ' days'));
+        $bucketTotal = 0;
+        for ($dayOffset = $offset; $dayOffset <= $bucketEndOffset; $dayOffset++) {
+            $bucketDate = date('Y-m-d', strtotime($periodStart . ' +' . $dayOffset . ' days'));
+            $bucketTotal += $trendByDate[$bucketDate] ?? 0;
+        }
+        $trendBuckets[] = ['label' => date('d M', strtotime($bucketStart)), 'end' => $bucketEnd, 'total' => $bucketTotal];
+    }
+    $trendMax = max(1, ...array_column($trendBuckets, 'total'));
+    $periodCollected = array_sum(array_column($trendBuckets, 'total'));
+    $invoiceCount = count($allInvoices);
+    $statusDegrees = [];
+    $degreeCursor = 0;
+    $statusColors = ['paid' => '#18a36f', 'partial' => '#4d83d1', 'overdue' => '#e07052', 'unpaid' => '#e7b33f'];
+    foreach ($statusCounts as $status => $count) {
+        $nextDegree = $degreeCursor + ($invoiceCount > 0 ? ($count / $invoiceCount) * 360 : 0);
+        $statusDegrees[] = $statusColors[$status] . ' ' . round($degreeCursor, 2) . 'deg ' . round($nextDegree, 2) . 'deg';
+        $degreeCursor = $nextDegree;
+    }
+    $donutStyle = $invoiceCount > 0 ? 'background:conic-gradient(' . implode(',', $statusDegrees) . ')' : '';
+    begin_page('Invoice Dashboard', $page, 'Live billing, collection, due, and recurring invoice overview.');
+    echo '<div class="dashboard-quick-actions"><span>Quick Actions</span><a class="btn btn-primary btn-sm" href="' . e(url('new')) . '">' . icon('plus',16) . ' Create Invoice</a><a class="btn btn-outline btn-sm" href="' . e(url('collections')) . '">' . icon('wallet',16) . ' Take Collection</a><a class="btn btn-outline btn-sm" href="' . e(url('recurring')) . '">' . icon('repeat',16) . ' Recurring Billing</a><a class="btn btn-outline btn-sm" href="' . e(url('invoices')) . '">' . icon('invoice',16) . ' All Invoices</a></div>';
+    echo '<div class="stats-grid invoice-stats-grid"><a class="stat-card dashboard-stat" href="' . e(url('invoices')) . '"><span class="stat-icon stat-icon-mint">' . icon('invoice',22) . '</span><span class="stat-label">Total Billed</span><strong>' . format_money($totalBilled) . '</strong><small>' . number_format($invoiceCount) . ' invoices · ' . format_money($monthBilled) . ' this month</small></a><a class="stat-card dashboard-stat" href="' . e(url('collections')) . '"><span class="stat-icon stat-icon-blue">' . icon('wallet',22) . '</span><span class="stat-label">Cash Collected</span><strong>' . format_money((int)$cashStats['collected']) . '</strong><small>' . format_money($monthCollected) . ' received this month</small></a><a class="stat-card dashboard-stat" href="' . e(url('invoices', ['filter'=>'overdue'])) . '"><span class="stat-icon stat-icon-peach">' . icon('clock',22) . '</span><span class="stat-label">Outstanding</span><strong>' . format_money($totalOutstanding) . '</strong><small>' . format_money($overdueAmount) . ' overdue · ' . format_money($dueSoonAmount) . ' due soon</small></a><a class="stat-card dashboard-stat" href="' . e(url('recurring')) . '"><span class="stat-icon stat-icon-purple">' . icon('repeat',22) . '</span><span class="stat-label">Collection Rate</span><strong>' . e((string)$collectionRate) . '%</strong><div class="metric-progress"><i style="width:' . e((string)$collectionRate) . '%"></i></div><small>' . number_format($activeRecurring) . ' active recurring schedules</small></a></div>';
+    echo '<div class="dashboard-primary-grid"><section class="panel collection-trend-panel"><div class="panel-heading"><div><span class="eyebrow">COLLECTION TREND</span><h2>' . format_money($periodCollected) . ' collected</h2><small>Cash received during the selected period</small></div><div class="period-tabs">';
+    foreach ([7 => '7 Days', 30 => '30 Days', 90 => '90 Days'] as $periodValue => $periodLabel) echo '<a class="' . ($period === $periodValue ? 'selected' : '') . '" href="' . e(url('invoice-dashboard', ['period'=>$periodValue])) . '">' . e($periodLabel) . '</a>';
+    echo '</div></div><div class="collection-chart" role="img" aria-label="Collection trend for the last ' . $period . ' days">';
+    foreach ($trendBuckets as $bucket) {
+        $height = $bucket['total'] > 0 ? max(6, round(($bucket['total'] / $trendMax) * 100, 1)) : 2;
+        echo '<div class="chart-column" title="' . e($bucket['label']) . ': ' . e(format_money((int)$bucket['total'])) . '"><span class="chart-value">' . ($bucket['total'] > 0 ? e(format_money((int)$bucket['total'])) : '') . '</span><div class="chart-track"><i style="height:' . e((string)$height) . '%"></i></div><small>' . e($bucket['label']) . '</small></div>';
+    }
+    echo '</div></section><section class="panel status-overview"><div class="panel-heading"><div><span class="eyebrow">INVOICE STATUS</span><h2>Payment Overview</h2></div></div><div class="status-donut-wrap"><div class="status-donut" style="' . e($donutStyle) . '"><span><strong>' . number_format($invoiceCount) . '</strong><small>Invoices</small></span></div><div class="status-legend">';
+    foreach (['paid'=>'Paid','partial'=>'Partially Paid','overdue'=>'Overdue','unpaid'=>'Unpaid'] as $status => $label) echo '<a href="' . e(url('invoices', ['filter'=>$status])) . '"><i style="background:' . e($statusColors[$status]) . '"></i><span>' . e($label) . '</span><strong>' . number_format($statusCounts[$status]) . '</strong></a>';
+    echo '</div></div><div class="dashboard-callout"><span>Discounts Given</span><strong>' . format_money((int)$cashStats['discounts']) . '</strong></div></section></div>';
+    echo '<div class="dashboard-secondary-grid"><section class="panel"><div class="panel-heading"><div><span class="eyebrow">LATEST BILLING</span><h2>Recent Invoices</h2></div><a class="text-link" href="' . e(url('invoices')) . '">View All ' . icon('arrow',15) . '</a></div>'; invoice_table($invoices); echo '</section><aside class="dashboard-feed"><section class="panel dashboard-mini-panel"><div class="panel-heading"><div><span class="eyebrow">AUTOMATION</span><h2>Upcoming Recurring</h2></div><a class="text-link" href="' . e(url('recurring')) . '">Manage</a></div><div class="dashboard-feed-list">';
+    if (!$upcomingRecurring) echo '<div class="dashboard-feed-empty">No active recurring schedule.</div>';
+    foreach ($upcomingRecurring as $schedule) echo '<a href="' . e(url('recurring')) . '"><span class="feed-icon">' . icon('repeat',16) . '</span><span><strong>' . e($schedule['client_name']) . '</strong><small>' . e(billing_frequency_options()[$schedule['frequency']] ?? ucfirst($schedule['frequency'])) . ' · ' . e(format_date($schedule['next_issue_date'])) . '</small></span><b>' . format_money((int)$schedule['amount_cents']) . '</b></a>';
+    echo '</div></section><section class="panel dashboard-mini-panel"><div class="panel-heading"><div><span class="eyebrow">RECENT ACTIVITY</span><h2>Latest Collections</h2></div><a class="text-link" href="' . e(url('collections')) . '">View All</a></div><div class="dashboard-feed-list">';
+    if (!$recentPayments) echo '<div class="dashboard-feed-empty">No collection has been recorded.</div>';
+    foreach ($recentPayments as $payment) echo '<a href="' . e(url('invoice', ['id'=>$payment['invoice_id']])) . '"><span class="feed-icon feed-icon-paid">' . icon('check',16) . '</span><span><strong>' . e($payment['client_name']) . '</strong><small>' . e($payment['invoice_number']) . ' · ' . e(format_date($payment['paid_at'])) . '</small></span><b>' . format_money((int)$payment['amount_cents']) . '</b></a>';
+    echo '</div></section></aside></div>';
     end_page(); break;
 
 case 'clients-dashboard':
-    $clientStats = query_one('SELECT COUNT(*) total FROM clients');
-    begin_page('Clients Overview', $page, 'Client accounts and account ledgers.');
-    echo '<div class="module-dashboard-grid"><a class="panel module-dashboard-card" href="' . e(url('clients')) . '"><span class="stat-icon stat-icon-mint">' . icon('users',24) . '</span><h2>' . number_format((int)$clientStats['total']) . ' Clients</h2><p>Search, add, edit, and review client profiles.</p><span class="text-link">Manage Clients</span></a><a class="panel module-dashboard-card" href="' . e(url('client-ledger')) . '"><span class="stat-icon stat-icon-blue">' . icon('invoice',24) . '</span><h2>Client Ledger</h2><p>Review invoices, collections, discounts, and balances.</p><span class="text-link">Open Ledger</span></a></div>';
-    end_page(); break;
+    redirect('clients');
 
 case 'services-dashboard':
+    redirect('services');
 case 'payments-dashboard':
+    redirect('payment-methods');
 case 'settings-dashboard':
-    $target = $page === 'services-dashboard' ? 'services' : ($page === 'payments-dashboard' ? 'payment-methods' : 'settings');
-    $label = module_definitions()[active_module($page)]['label'];
-    begin_page($label . ' Overview', $page, 'Open this module to manage its controls.');
-    echo '<a class="panel module-dashboard-card" href="' . e(url($target)) . '"><span class="stat-icon stat-icon-mint">' . icon(module_definitions()[active_module($page)]['icon'],24) . '</span><h2>Manage ' . e($label) . '</h2><p>Open the ' . e($label) . ' control page.</p><span class="text-link">Continue ' . icon('arrow',16) . '</span></a>';
-    end_page(); break;
+    redirect('settings');
 
 case 'invoices':
     $search = trim((string)($_GET['q'] ?? ''));
