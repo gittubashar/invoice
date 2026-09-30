@@ -16,12 +16,14 @@ function invoice_pdf_html(array $invoice, array $items, array $methods, string $
     $showSlogan = setting('pdf_show_slogan', '1') === '1';
     $signature = uploaded_asset_url(setting('signature_path'));
     $signatureFile = $signature !== '' ? str_replace('\\', '/', __DIR__ . '/' . $signature) : '';
+    $discount = (int)($invoice['discount_cents'] ?? 0);
+    $collected = max(0, (int)$invoice['paid_cents'] - $discount);
     $due = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
     $status = invoice_status($invoice);
-    $methodTypes = ['bank' => 'ব্যাংক', 'mfs' => 'মোবাইল ব্যাংকিং', 'card' => 'কার্ড', 'other' => 'অন্যান্য'];
+    $methodTypes = ['bank' => 'Bank', 'mfs' => 'Mobile Banking', 'card' => 'Card', 'other' => 'Other'];
     ob_start();
     ?>
-<html lang="bn"><head><meta charset="utf-8"><style>
+<html lang="en"><head><meta charset="utf-8"><style>
 body{font-family:<?= e($fontFamily) ?>;font-size:8pt;color:#1b2c44}
 h1,h2,h3,p{margin:0}
 table{border-collapse:collapse;width:100%}
@@ -85,36 +87,36 @@ table{border-collapse:collapse;width:100%}
 </tr></table>
 <div class="bill-to">
     <h2>Bill To</h2>
-    <p><strong>গ্রাহক:</strong> <?= e($invoice['client_name']) ?></p>
-    <?php if ($invoice['billing_company_name'] !== ''): ?><p><strong>কোম্পানি:</strong> <?= e($invoice['billing_company_name']) ?></p><?php endif; ?>
-    <p><strong>মোবাইল:</strong> <?= e($invoice['client_phone']) ?></p>
-    <?php if ($invoice['client_email'] !== ''): ?><p><strong>ইমেইল:</strong> <?= e($invoice['client_email']) ?></p><?php endif; ?>
+    <p><strong>Client:</strong> <?= e($invoice['client_name']) ?></p>
+    <?php if ($invoice['billing_company_name'] !== ''): ?><p><strong>Company:</strong> <?= e($invoice['billing_company_name']) ?></p><?php endif; ?>
+    <p><strong>Mobile:</strong> <?= e($invoice['client_phone']) ?></p>
+    <?php if ($invoice['client_email'] !== ''): ?><p><strong>Email:</strong> <?= e($invoice['client_email']) ?></p><?php endif; ?>
 </div>
-<table class="items"><thead><tr><th class="num">#</th><th>বিবরণ</th><th class="qty">পরিমাণ</th><th class="money">একক মূল্য (টাকা)</th><th class="money">মোট (টাকা)</th></tr></thead><tbody>
+<table class="items"><thead><tr><th class="num">#</th><th>Description</th><th class="qty">Quantity</th><th class="money">Unit Price (BDT)</th><th class="money">Total (BDT)</th></tr></thead><tbody>
 <?php foreach ($items as $index => $item): ?>
     <tr class="<?= $index % 2 ? 'stripe' : '' ?>"><td class="num"><?= $index + 1 ?></td><td><div class="item-name"><?= e($item['name']) ?></div><?php if ($item['description'] !== ''): ?><div class="item-description"><?= e($item['description']) ?></div><?php endif; ?></td><td class="qty"><?= e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) ?></td><td class="money"><?= e(number_format((int)$item['unit_price_cents'] / 100, 2)) ?></td><td class="money"><?= e(number_format((int)$item['total_cents'] / 100, 2)) ?></td></tr>
 <?php endforeach; ?>
 </tbody></table>
-<table class="totals-wrap"><tr><td style="width:54%"><div class="thanks">আপনার আস্থাই<br>আমাদের অনুপ্রেরণা।</div></td><td style="width:46%">
-    <table class="totals"><tr><td>সাবটোটাল</td><td><?= e(format_money((int)$invoice['total_cents'])) ?></td></tr><tr><td>পরিশোধিত</td><td><?= e(format_money((int)$invoice['paid_cents'])) ?></td></tr><tr class="due-row"><td>বকেয়া</td><td><?= e(format_money($due)) ?></td></tr></table>
+<table class="totals-wrap"><tr><td style="width:54%"><div class="thanks">Your trust is<br>our inspiration.</div></td><td style="width:46%">
+    <table class="totals"><tr><td>Subtotal</td><td><?= e(format_money((int)$invoice['total_cents'])) ?></td></tr><tr><td>Paid</td><td><?= e(format_money($collected)) ?></td></tr><?php if ($discount > 0): ?><tr><td>Discount</td><td><?= e(format_money($discount)) ?></td></tr><?php endif; ?><tr class="due-row"><td>Balance Due</td><td><?= e(format_money($due)) ?></td></tr></table>
 </td></tr></table>
-<div class="payment-area"><h2>পেমেন্ট তথ্য</h2>
-    <?php if (!$methods): ?><p>পেমেন্ট তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন।</p><?php endif; ?>
+<div class="payment-area"><h2>Payment Information</h2>
+    <?php if (!$methods): ?><p>No payment methods have been added.</p><?php endif; ?>
     <?php if ($methods): ?><table class="payment-grid"><tr><?php endif; ?>
     <?php foreach ($methods as $index => $method): $qr = uploaded_asset_url((string)$method['qr_path']); $qrFile = $qr !== '' ? str_replace('\\', '/', __DIR__ . '/' . $qr) : ''; ?>
     <?php if ($index > 0 && $index % 3 === 0): ?></tr><tr><?php endif; ?>
     <td class="method-cell"><table class="payment-card"><tr><td>
-        <h3><?= e($method['name']) ?> <small>· <?= e($methodTypes[$method['type']] ?? 'অন্যান্য') ?></small></h3>
-        <?php if ($method['account_name'] !== ''): ?><p><strong>অ্যাকাউন্টের নাম:</strong> <?= e($method['account_name']) ?></p><?php endif; ?>
-        <?php if ($method['account_number'] !== ''): ?><p><strong>অ্যাকাউন্ট নম্বর:</strong> <?= e($method['account_number']) ?></p><?php endif; ?>
-        <?php if ($method['mobile_number'] !== ''): ?><p><strong>মোবাইল নম্বর:</strong> <?= e($method['mobile_number']) ?></p><?php endif; ?>
-        <?php if ($method['branch'] !== ''): ?><p><strong>শাখা / রাউটিং:</strong> <?= e($method['branch']) ?></p><?php endif; ?>
+        <h3><?= e($method['name']) ?> <small>· <?= e($methodTypes[$method['type']] ?? 'Other') ?></small></h3>
+        <?php if ($method['account_name'] !== ''): ?><p><strong>Account Name:</strong> <?= e($method['account_name']) ?></p><?php endif; ?>
+        <?php if ($method['account_number'] !== ''): ?><p><strong>Account Number:</strong> <?= e($method['account_number']) ?></p><?php endif; ?>
+        <?php if ($method['mobile_number'] !== ''): ?><p><strong>Mobile Number:</strong> <?= e($method['mobile_number']) ?></p><?php endif; ?>
+        <?php if ($method['branch'] !== ''): ?><p><strong>Branch / Routing:</strong> <?= e($method['branch']) ?></p><?php endif; ?>
         <?php if ($method['instructions'] !== ''): ?><p><?= nl2br(e($method['instructions'])) ?></p><?php endif; ?>
-    </td><?php if ($qrFile !== ''): ?><td class="qr-cell"><img src="<?= e($qrFile) ?>" width="53" height="53"><div style="font-size:5.5pt;color:#315a81">QR পেমেন্ট</div></td><?php endif; ?></tr></table></td>
+    </td><?php if ($qrFile !== ''): ?><td class="qr-cell"><img src="<?= e($qrFile) ?>" width="53" height="53"><div style="font-size:5.5pt;color:#315a81">QR Payment</div></td><?php endif; ?></tr></table></td>
     <?php endforeach; ?>
     <?php if ($methods): ?><?php $remainder = count($methods) % 3; for ($blank = $remainder; $remainder !== 0 && $blank < 3; $blank++): ?><td></td><?php endfor; ?></tr></table><?php endif; ?>
 </div>
-<table class="note-signature"><tr><td style="width:70%"><div class="note"><h2>নোট</h2><ol><li>পেমেন্ট করার সময় ইনভয়েস নম্বর উল্লেখ করুন।</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div></td><td style="width:30%;text-align:center"><div class="signature"><?php if ($signatureFile !== ''): ?><img class="signature-image" src="<?= e($signatureFile) ?>"><?php endif; ?><div class="signature-line"></div><div class="signature-caption">Authorized Signature</div><div class="signature-site"><?= e($siteTitle) ?></div></div></td></tr></table>
+<table class="note-signature"><tr><td style="width:70%"><div class="note"><h2>Notes</h2><ol><li>Please include the invoice number when making a payment.</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div></td><td style="width:30%;text-align:center"><div class="signature"><?php if ($signatureFile !== ''): ?><img class="signature-image" src="<?= e($signatureFile) ?>"><?php endif; ?><div class="signature-line"></div><div class="signature-caption">Authorized Signature</div><div class="signature-site"><?= e($siteTitle) ?></div></div></td></tr></table>
 </body></html>
 <?php
     return (string)ob_get_clean();
@@ -151,7 +153,7 @@ function render_invoice_pdf(array $invoice, array $items, array $methods): strin
     ]);
     $mpdf->SetTitle((string)$invoice['number']);
     $mpdf->SetAuthor(setting('site_title', 'Billflow'));
-    $footerSlogan = setting('slogan') !== '' ? setting('slogan') : 'আপনার আস্থায় আমাদের পথচলা';
+    $footerSlogan = setting('slogan') !== '' ? setting('slogan') : 'Built on your trust';
     $footerWebsite = setting('website');
     $footerText = e($footerSlogan) . ($footerWebsite !== '' ? ' &nbsp; | &nbsp; ' . e($footerWebsite) : '');
     $mpdf->SetHTMLFooter('<div style="border-top:0.3mm solid #478ab9;padding-top:1.4mm;text-align:center;color:#376086;font-family:hindsiliguri;font-size:6.5pt;letter-spacing:.03em">' . $footerText . '</div>');

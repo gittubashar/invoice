@@ -120,6 +120,29 @@
     refreshCollectionType();
   }
 
+  const multiCollection = document.querySelector('[data-multi-collection]');
+  if (multiCollection) {
+    const boxes = [...multiCollection.querySelectorAll('input[name="invoice_ids[]"]')];
+    const selectAll = multiCollection.querySelector('[data-select-all]');
+    const count = multiCollection.querySelector('[data-selected-count]');
+    const total = multiCollection.querySelector('[data-selected-total]');
+    const filter = multiCollection.querySelector('[data-invoice-filter]');
+    const refreshSelected = () => {
+      const selected = boxes.filter(box => box.checked);
+      const cents = selected.reduce((sum, box) => sum + Number(box.dataset.balance || 0), 0);
+      if (count) count.textContent = `${selected.length} selected`;
+      if (total) total.textContent = `BDT ${new Intl.NumberFormat('en-BD', { maximumFractionDigits: 2 }).format(cents / 100)}`;
+      if (selectAll) selectAll.checked = boxes.length > 0 && selected.length === boxes.length;
+    };
+    boxes.forEach(box => box.addEventListener('change', refreshSelected));
+    selectAll?.addEventListener('change', () => { boxes.forEach(box => { box.checked = selectAll.checked; }); refreshSelected(); });
+    filter?.addEventListener('input', () => {
+      const query = filter.value.trim().toLowerCase();
+      multiCollection.querySelectorAll('[data-invoice-row]').forEach(row => { row.hidden = query !== '' && !row.dataset.search.includes(query); });
+    });
+    refreshSelected();
+  }
+
   const form = document.getElementById('invoice-form');
   if (!form) return;
 
@@ -145,7 +168,7 @@
       form.elements.client_name.value = client.name || '';
       form.elements.company_name.value = client.company_name || '';
       matchedClientId.value = client.id || '';
-      clientMatch.textContent = `বিদ্যমান ক্লায়েন্ট পাওয়া গেছে: ${client.name}${client.company_name ? ` · ${client.company_name}` : ''}`;
+      clientMatch.textContent = `Existing client found: ${client.name}${client.company_name ? ` · ${client.company_name}` : ''}`;
       clientMatch.hidden = false;
       hideResults();
     };
@@ -162,7 +185,7 @@
       if (!clients.length) {
         const empty = document.createElement('div');
         empty.className = 'client-search-empty';
-        empty.textContent = 'কোনো বিদ্যমান ক্লায়েন্ট পাওয়া যায়নি। এই তথ্য দিয়ে নতুন ক্লায়েন্ট তৈরি হবে।';
+        empty.textContent = 'No existing client was found. A new client will be created with this information.';
         clientResults.append(empty);
       } else {
         clients.forEach(client => {
@@ -173,7 +196,7 @@
           const name = document.createElement('strong');
           const company = document.createElement('small');
           name.textContent = client.name;
-          company.textContent = client.company_name || 'কোম্পানির নাম নেই';
+          company.textContent = client.company_name || 'No company name';
           identity.append(name, company);
           const contact = document.createElement('span');
           contact.className = 'client-search-contact';
@@ -222,12 +245,12 @@
     const items = [...itemContainer.querySelectorAll('.line-item')];
     let total = 0;
     items.forEach((item, index) => {
-      item.querySelector('.item-index').textContent = `আইটেম ${index + 1}`;
+      item.querySelector('.item-index').textContent = `Item ${index + 1}`;
       total += (parseFloat(item.querySelector('.item-qty').value) || 0) *
         (parseFloat(item.querySelector('.item-price').value) || 0);
     });
     document.getElementById('summary-count').textContent = items.length;
-    document.getElementById('summary-total').textContent = `৳${currency.format(total)}`;
+    document.getElementById('summary-total').textContent = `BDT ${currency.format(total)}`;
     document.querySelectorAll('.recurring-field').forEach(el => {
       el.hidden = form.elements.invoice_type.value !== 'recurring';
     });

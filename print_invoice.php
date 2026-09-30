@@ -11,11 +11,13 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
     $mobile = setting('mobile_number');
     $email = setting('email');
     $website = setting('website');
+    $discount = (int)($invoice['discount_cents'] ?? 0);
+    $collected = max(0, (int)$invoice['paid_cents'] - $discount);
     $due = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
     $status = invoice_status($invoice);
     ?>
 <!doctype html>
-<html lang="bn">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -25,8 +27,8 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
 </head>
 <body>
 <div class="print-actions">
-    <button type="button" onclick="window.print()">প্রিন্ট / PDF সেভ করুন</button>
-    <a href="<?= e(url('invoice', ['id' => $invoice['id']])) ?>">ইনভয়েসে ফিরুন</a>
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    <a href="<?= e(url('invoice', ['id' => $invoice['id']])) ?>">Back to Invoice</a>
 </div>
 <main class="invoice-sheet">
     <header class="sheet-header">
@@ -44,7 +46,7 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
         </div>
         <div class="invoice-heading">
             <div class="topline">TECHNOLOGY &nbsp; | &nbsp; SERVICE &nbsp; | &nbsp; GROWTH</div>
-            <div class="invoice-title"><span>স্মার্ট ইনভয়েস</span><strong>INVOICE</strong></div>
+            <div class="invoice-title"><span>Invoice / Bill</span><strong>INVOICE</strong></div>
             <div class="invoice-facts">
                 <div><span>Invoice No</span><b>:</b><strong><?= e($invoice['number']) ?></strong></div>
                 <div><span>Date</span><b>:</b><strong><?= e(format_date($invoice['issue_date'])) ?></strong></div>
@@ -58,17 +60,17 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
         <div class="bill-recipient">
             <h2>Bill To</h2>
             <div class="recipient-content"><span class="recipient-avatar">●</span><div>
-                <p><strong>গ্রাহক:</strong> <?= e($invoice['client_name']) ?></p>
-                <?php if ($invoice['billing_company_name'] !== ''): ?><p><strong>কোম্পানি:</strong> <?= e($invoice['billing_company_name']) ?></p><?php endif; ?>
-                <p><strong>মোবাইল:</strong> <?= e($invoice['client_phone']) ?></p>
-                <?php if ($invoice['client_email'] !== ''): ?><p><strong>ইমেইল:</strong> <?= e($invoice['client_email']) ?></p><?php endif; ?>
+                <p><strong>Client:</strong> <?= e($invoice['client_name']) ?></p>
+                <?php if ($invoice['billing_company_name'] !== ''): ?><p><strong>Company:</strong> <?= e($invoice['billing_company_name']) ?></p><?php endif; ?>
+                <p><strong>Mobile:</strong> <?= e($invoice['client_phone']) ?></p>
+                <?php if ($invoice['client_email'] !== ''): ?><p><strong>Email:</strong> <?= e($invoice['client_email']) ?></p><?php endif; ?>
             </div></div>
         </div>
-        <div class="bill-message">বিশ্বাসে<br>প্রযুক্তিতে<br>আপনার পাশে সবসময়</div>
+        <div class="bill-message">Built on trust<br>Through technology<br>Always by your side</div>
     </section>
 
     <table class="line-table">
-        <thead><tr><th>#</th><th>বিবরণ</th><th>পরিমাণ</th><th>একক মূল্য (টাকা)</th><th>মোট (টাকা)</th></tr></thead>
+        <thead><tr><th>#</th><th>Description</th><th>Quantity</th><th>Unit Price (BDT)</th><th>Total (BDT)</th></tr></thead>
         <tbody>
         <?php foreach ($items as $position => $item): ?>
             <tr><td><?= $position + 1 ?></td><td><strong><?= e($item['name']) ?></strong><?php if ($item['description'] !== ''): ?><small><?= e($item['description']) ?></small><?php endif; ?></td><td><?= e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) ?></td><td><?= e(number_format((int)$item['unit_price_cents'] / 100, 2)) ?></td><td><?= e(number_format((int)$item['total_cents'] / 100, 2)) ?></td></tr>
@@ -77,37 +79,38 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
     </table>
 
     <div class="totals-area">
-        <div class="thanks-message">আপনার আস্থাই<br>আমাদের অনুপ্রেরণা।<span></span></div>
+        <div class="thanks-message">Your trust is<br>our inspiration.<span></span></div>
         <div class="totals-card">
-            <div><span>সাবটোটাল</span><strong><?= e(format_money((int)$invoice['total_cents'])) ?></strong></div>
-            <div><span>পরিশোধিত</span><strong><?= e(format_money((int)$invoice['paid_cents'])) ?></strong></div>
-            <div class="total-due"><span>বকেয়া</span><strong><?= e(format_money($due)) ?></strong></div>
+            <div><span>Subtotal</span><strong><?= e(format_money((int)$invoice['total_cents'])) ?></strong></div>
+            <div><span>Paid</span><strong><?= e(format_money($collected)) ?></strong></div>
+            <?php if ($discount > 0): ?><div><span>Discount</span><strong><?= e(format_money($discount)) ?></strong></div><?php endif; ?>
+            <div class="total-due"><span>Balance Due</span><strong><?= e(format_money($due)) ?></strong></div>
         </div>
     </div>
 
     <section class="sheet-payment<?= count($methods) > 1 ? ' multiple-methods' : '' ?>">
-        <h2 class="payment-section-title"><span>▣</span> পেমেন্ট তথ্য</h2>
-        <?php if (!$methods): ?><p>পেমেন্ট তথ্যের জন্য আমাদের সাথে যোগাযোগ করুন।</p><?php endif; ?>
-        <?php foreach ($methods as $method): $qr = uploaded_asset_url($method['qr_path']); $methodType = ['bank' => 'ব্যাংক', 'mfs' => 'মোবাইল ব্যাংকিং', 'card' => 'কার্ড', 'other' => 'অন্যান্য'][$method['type']] ?? 'অন্যান্য'; ?>
+        <h2 class="payment-section-title"><span>▣</span> Payment Information</h2>
+        <?php if (!$methods): ?><p>No payment methods have been added.</p><?php endif; ?>
+        <?php foreach ($methods as $method): $qr = uploaded_asset_url($method['qr_path']); $methodType = ['bank' => 'Bank', 'mfs' => 'Mobile Banking', 'card' => 'Card', 'other' => 'Other'][$method['type']] ?? 'Other'; ?>
             <div class="payment-method-entry<?= $qr === '' ? ' no-qr' : '' ?>">
                 <div class="payment-data">
                     <h3><?= e($method['name']) ?> <small>· <?= e($methodType) ?></small></h3>
-                    <?php if ($method['account_name'] !== ''): ?><p><strong>অ্যাকাউন্টের নাম:</strong> <?= e($method['account_name']) ?></p><?php endif; ?>
-                    <?php if ($method['account_number'] !== ''): ?><p><strong>অ্যাকাউন্ট নম্বর:</strong> <?= e($method['account_number']) ?></p><?php endif; ?>
-                    <?php if ($method['mobile_number'] !== ''): ?><p><strong>মোবাইল নম্বর:</strong> <?= e($method['mobile_number']) ?></p><?php endif; ?>
-                    <?php if ($method['branch'] !== ''): ?><p><strong>শাখা / রাউটিং:</strong> <?= e($method['branch']) ?></p><?php endif; ?>
+                    <?php if ($method['account_name'] !== ''): ?><p><strong>Account Name:</strong> <?= e($method['account_name']) ?></p><?php endif; ?>
+                    <?php if ($method['account_number'] !== ''): ?><p><strong>Account Number:</strong> <?= e($method['account_number']) ?></p><?php endif; ?>
+                    <?php if ($method['mobile_number'] !== ''): ?><p><strong>Mobile Number:</strong> <?= e($method['mobile_number']) ?></p><?php endif; ?>
+                    <?php if ($method['branch'] !== ''): ?><p><strong>Branch / Routing:</strong> <?= e($method['branch']) ?></p><?php endif; ?>
                     <?php if ($method['instructions'] !== ''): ?><p class="method-instructions"><?= nl2br(e($method['instructions'])) ?></p><?php endif; ?>
                 </div>
-                <?php if ($qr !== ''): ?><div class="payment-qr"><h3>QR কোডে পেমেন্ট করুন</h3><img src="<?= e($qr) ?>" alt="<?= e($method['name']) ?> পেমেন্ট QR"></div><?php endif; ?>
+                <?php if ($qr !== ''): ?><div class="payment-qr"><h3>Pay with QR Code</h3><img src="<?= e($qr) ?>" alt="<?= e($method['name']) ?> Payment QR"></div><?php endif; ?>
             </div>
         <?php endforeach; ?>
     </section>
 
     <section class="sheet-bottom">
-        <div class="invoice-note"><h2>নোট</h2><ol><li>পেমেন্ট করার সময় ইনভয়েস নম্বর উল্লেখ করুন।</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div>
+        <div class="invoice-note"><h2>Notes</h2><ol><li>Please include the invoice number when making a payment.</li><?php if ($invoice['notes'] !== ''): ?><li><?= nl2br(e($invoice['notes'])) ?></li><?php endif; ?></ol></div>
         <div class="signature"><?php if ($signature !== ''): ?><img class="signature-image" src="<?= e($signature) ?>" alt="Authorized Signature"><?php endif; ?><span class="signature-line"></span><div class="signature-caption">Authorized Signature</div><div class="signature-site"><?= e($siteTitle) ?></div></div>
     </section>
-    <footer class="sheet-footer"><?= e($slogan !== '' ? $slogan : 'আপনার আস্থায় আমাদের পথচলা') ?><?php if ($website !== ''): ?> &nbsp; | &nbsp; <?= e($website) ?><?php endif; ?></footer>
+    <footer class="sheet-footer"><?= e($slogan !== '' ? $slogan : 'Built on your trust') ?><?php if ($website !== ''): ?> &nbsp; | &nbsp; <?= e($website) ?><?php endif; ?></footer>
 </main>
 </body>
 </html>

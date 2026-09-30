@@ -1,8 +1,14 @@
 # Billflow
 
+Billflow is an invoice and collection application built with PHP 8.3 and MySQL.
+
+## Modules
+
+The workspace is divided into Invoice, Clients, Services, Payment Methods, and Settings modules. Each module has its own overview and sidebar. Invoice controls include invoices, collections, recurring billing, and money receipts. Client controls include profiles and the searchable client ledger.
+
 ## Live server deployment
 
-`.env`-এ database ও SMTP password থাকে, তাই এটি Git-এ upload হয় না। Live server-এর project root-এ `.env.example` কপি করে `.env` নামে নতুন file তৈরি করুন এবং hosting provider-এর MySQL তথ্য বসান:
+The `.env` file contains database and SMTP credentials and is excluded from Git. Copy `.env.example` to `.env` in the project root, then enter the MySQL credentials supplied by the hosting provider:
 
 ```dotenv
 DB_DRIVER=mysql
@@ -13,76 +19,82 @@ DB_USERNAME=hosting_database_user
 DB_PASSWORD=hosting_database_password
 ```
 
-SSH/Terminal থাকলে project root-এ চালান:
+Run these commands when SSH or terminal access is available:
 
 ```bash
 cp .env.example .env
 composer install --no-dev --optimize-autoloader
 ```
 
-Terminal না থাকলে cPanel File Manager দিয়ে `.env.example` কপি/rename করে `.env` বানান। Local project-এর সম্পূর্ণ `vendor/` folder-ও server-এ upload করুন। PHP-তে `pdo_mysql`, `mbstring`, `openssl`, `sodium` এবং `gd` extension চালু থাকতে হবে। MySQL database ও user আগে তৈরি করে user-কে database-এর সব প্রয়োজনীয় permission দিন। প্রথম সফল request-এ application প্রয়োজনীয় table তৈরি করবে।
+Without terminal access, use cPanel File Manager to copy `.env.example` to `.env` and upload the complete local `vendor/` directory. Enable the `pdo_mysql`, `mbstring`, `openssl`, `sodium`, and `gd` PHP extensions. Create the MySQL database and user first, then grant that user the required database permissions. The application creates its tables on the first successful request.
 
-Deployment-এর পরে `.env`, `vendor/autoload.php` এবং `assets/uploads/` আছে কি না যাচাই করুন। Database connection ব্যর্থ হলে application এখন raw HTTP 500 না দেখিয়ে setup নির্দেশনা দেখাবে; আসল connection error hosting error log-এ থাকবে।
+After deployment, verify that `.env`, `vendor/autoload.php`, and `assets/uploads/` exist. If the database connection fails, the application displays setup guidance while writing technical details to the hosting error log.
 
-PHP 8.3 + MySQL দিয়ে তৈরি ইনভয়েস ও কালেকশন অ্যাপ।
+## Local setup
 
-## চালু করুন
+Open this directory as the site root in Laragon. Copy `.env.example` to `.env`, enter the MySQL host, database, username, and password, and create the configured database before opening the application.
 
-Laragon-এ এই ফোল্ডারটি site root হিসেবে খুলুন। `.env.example` কপি করে `.env` বানিয়ে MySQL host, database, username ও password দিন। MySQL-এ নির্ধারিত database আগে তৈরি থাকতে হবে; প্রথম request-এ প্রয়োজনীয় table স্বয়ংক্রিয়ভাবে তৈরি হবে। ডিফল্ট Super Admin ইমেইল `me@kbashar.com`; দেয়া bcrypt hash-টি ডেটাবেসে একবার সংরক্ষণ করা হয়। লগইনের জন্য সেই hash-এর **মূল পাসওয়ার্ড** লিখতে হবে, hash string নয়।
+The default Super Admin email is `me@kbashar.com`. The supplied bcrypt hash is stored in the database once. Sign in with the original password represented by that hash, rather than the hash string.
 
-## SQLite থেকে MySQL migration
-
-আগের `storage/invoice.sqlite`-এর সব data, ID এবং relation MySQL-এ নিতে প্রথমে `.env`-এ MySQL connection ঠিক করে চালান:
-
-```powershell
-& 'D:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe' migrate_sqlite_to_mysql.php
-```
-
-Target MySQL database-এ আগে থেকেই business data থাকলে script থেমে যাবে। নিশ্চিতভাবে সেটি মুছে SQLite data দিয়ে প্রতিস্থাপন করতে `--fresh` দিন। Migration সফল হওয়ার আগে পুরোনো SQLite file মুছবেন না।
-
-PHP built-in server দিয়ে চালাতে:
+To use PHP's built in server:
 
 ```powershell
 & 'D:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe' -S 127.0.0.1:8000 router.php
 ```
 
-তারপর `http://127.0.0.1:8000` খুলুন।
+Then open `http://127.0.0.1:8000`.
 
-## Recurring invoice
+## SQLite to MySQL migration
 
-রিকারিং ইনভয়েস তৈরি করলে প্রথম ইনভয়েস সঙ্গে সঙ্গে সেভ হয়; পরের বিলিং তারিখ ও আইটেমের snapshot schedule-এ থাকে। অ্যাপ খোলা হলে due schedule-এর ইনভয়েস তৈরি হয়। অ্যাপ না খুললেও নিয়মিত তৈরি করতে Windows Task Scheduler-এ দিনে একবার নিচের কমান্ড চালানোর task দিন:
+Configure the MySQL connection in `.env`, then migrate the records, IDs, and relationships from `storage/invoice.sqlite`:
+
+```powershell
+& 'D:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe' migrate_sqlite_to_mysql.php
+```
+
+The script stops if the target database already contains business data. Pass `--fresh` only when you intend to replace that data with the SQLite records. Keep the old SQLite file until the migration completes successfully.
+
+## Recurring invoices
+
+Creating a recurring invoice saves the first invoice immediately and stores the next billing date and item snapshot in its schedule. Due invoices are generated when the application opens. For reliable background generation, run this command once a day with Windows Task Scheduler or an equivalent cron job:
 
 ```powershell
 & 'D:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe' 'D:\laragon\www\invoice\cron.php'
 ```
 
-## ক্লায়েন্ট অ্যাকাউন্ট
+## Client accounts and invoice editing
 
-ইনভয়েসে দেয়া মোবাইল নম্বর normalize করে ইউনিক `clients` রেকর্ড তৈরি হয়। বিদ্যমান নম্বর হলে সেই অ্যাকাউন্টের সঙ্গে ইনভয়েস যুক্ত হয়। Client portal এখনও নেই, তাই client password ফাঁকা রাখা হয়; পরের ধাপে যাচাই করা activation flow যোগ করে ক্লায়েন্টকে login ও online payment দেয়া যাবে। এখনকার পেমেন্ট কালেকশন অ্যাডমিন হাতে রেকর্ড করেন।
+Each invoice mobile number is normalized and linked to a unique `clients` record. An existing number reuses its client account. The client portal has not been added yet, so the client password remains empty. Administrators currently record collections manually.
 
-নতুন ইনভয়েসে `Company Name` ঐচ্ছিক। এটি ক্লায়েন্ট অ্যাকাউন্টে রাখা হয় এবং প্রতিটি ইনভয়েসে আলাদা snapshot হিসেবে সেভ হয়।
+`Company Name` is optional and is saved on the client account and as a snapshot on each invoice. Invoice editing can update the billing client, dates, services, custom items, quantities, prices, payment method, and notes. The invoice number and previous payments remain unchanged. The new total cannot be lower than the amount already collected. Editing a recurring invoice changes that invoice only.
 
-ইনভয়েস বিস্তারিত পেজের **এডিট করুন** বোতাম থেকে বিলিং ক্লায়েন্ট, তারিখ, সার্ভিস/আইটেম, পরিমাণ, দর ও নোট বদলানো যায়। ইনভয়েস নম্বর ও আগের পেমেন্ট অক্ষত থাকে। নতুন মোট আগে কালেকশন করা টাকার কম হলে পরিবর্তন সেভ হয় না। Recurring ইনভয়েস এডিট করলে শুধু সেই ইনভয়েস বদলায়; পরবর্তী schedule বদলায় না।
+## Invoice collections
 
-## ইনভয়েস কালেকশন
+The Invoice Collections page lists unpaid and partially paid invoices. Select multiple invoices for the same client to allocate one collection from the oldest invoice forward. When the amount clears one invoice, the remaining amount continues as a partial collection on the next selected invoice. Each batch receives a printable money receipt.
 
-সাইডবারের **ইনভয়েস কালেকশন** থেকে সব বকেয়া ও আংশিক পরিশোধিত invoice দেখা যায়। Invoice নির্বাচন করে Partial Collection অথবা সম্পূর্ণ বকেয়ার Full Paid Collection নেওয়া যায়। বকেয়ার বেশি collection গ্রহণ করা হয় না এবং একই পেজে সাম্প্রতিক collection history দেখা যায়।
+An optional partial discount can be recorded with confirmation that it applies to one-time or recurring invoices. Collection plus discount cannot exceed the selected balance.
 
-## Dashboard Settings
+## Billing cycles and email delivery
 
-সাইডবারের **ড্যাশবোর্ড সেটিংস**-এ Basic Settings ও SMTP ট্যাব আছে। Basic Settings-এর Site Title সাইডবার, লগইন ও ইনভয়েসে; Slogan সাইডবার ও লগইনে; Mobile Number এবং Email ইনভয়েসের যোগাযোগ অংশে দেখানো হয়। SMTP Host, Port, Encryption, Username, Password, From Name ও From Email সেভ করলে নতুন এবং recurring invoice তৈরির পর client-কে PDF attachment-সহ email পাঠানো হয়। ব্যর্থ delivery database queue-তে থাকে এবং `cron.php` সর্বোচ্চ তিনবার retry করে। SMTP পাসওয়ার্ড এনক্রিপ্ট করার key `storage/smtp.key`-তে থাকে; ডেটাবেসের সঙ্গে এই ফাইলটিও নিরাপদে backup রাখতে হবে।
+Recurring schedules support Monthly, Quarterly, Half Yearly, Yearly, Biennial, Triennial, Quadrennial, and Quinquennial billing. The billing cycle can be changed from the Recurring Billing page.
 
-Basic Settings থেকে Logo (PNG, JPG, WebP; সর্বোচ্চ ৩ MB) এবং Favicon (PNG, WebP, ICO; সর্বোচ্চ ১ MB) আপলোড করা যায়। ফাইল বাছার সঙ্গে সঙ্গে preview দেখা যায়; সেভ করার পর ছবি `assets/uploads/`-এ থাকে। Logo সাইডবার, লগইন ও ইনভয়েসে এবং Favicon ব্রাউজার ট্যাবে দেখা যায়। ইনভয়েসের জন্য অফিসের ঠিকানা ও Website-ও এখানে দেয়া যায়। Backup-এ `assets/uploads/` ফোল্ডারও রাখতে হবে।
+Manually created invoices remain in the email queue until an administrator clicks Send Mail. Invoices generated automatically from recurring schedules are queued for automatic email delivery.
 
-## Payment Method ও PDF ভিউ
+## Settings and email
 
-সাইডবারের **Payment Method** থেকে ব্যাংক, MFS, কার্ড বা অন্য পেমেন্ট মেথড যোগ এবং এডিট করা যায়। অ্যাকাউন্টের নাম ও নম্বর, মোবাইল নম্বর, শাখা/রাউটিং তথ্য, নির্দেশনা এবং QR ছবি (PNG, JPG, WebP; সর্বোচ্চ ৩ MB) রাখা যায়। মেথড নিষ্ক্রিয় করা যায়; আগে তৈরি ইনভয়েসে নির্ধারিত মেথড দেখা যায়। ইনভয়েসে কোনো মেথড নির্দিষ্ট না থাকলে বিস্তারিত ও প্রিন্ট/PDF ভিউতে সব সক্রিয় মেথড দেখায়। নতুন বা এডিট করা ইনভয়েসে একটি নির্দিষ্ট মেথড বেছে নিলে শুধু সেটিই দেখায়। রিকারিং ইনভয়েসের পরের চক্রেও নির্বাচিত মেথড থাকে।
+Basic Settings manages the site title, slogan, contact details, office address, website, logo, favicon, authorized signature, and PDF header visibility. Uploaded files are stored in `assets/uploads/`; include that directory in backups.
 
-ইনভয়েস তালিকা বা বিস্তারিত পেজে **PDF View** চাপলে Hind Siliguri বাংলা ফন্ট, পেমেন্ট মেথডের তথ্য ও ছোট QR-সহ এক পৃষ্ঠার A4 PDF নতুন ট্যাবে খুলে যায়। PDF তৈরিতে mPDF ব্যবহার করা হয়েছে; নতুন ইনস্টলেশনে `composer install` চালিয়ে dependency ইনস্টল করতে হবে। Composer-এর প্যাকেজ ফাইলগুলো এই প্রকল্পের `vendor/` ফোল্ডারেও আছে।
+SMTP Settings manages the host, port, encryption, username, password, sender name, and sender email. New and recurring invoice PDFs are emailed automatically when the client has a valid email address. Failed deliveries remain in the database queue, and `cron.php` retries them up to three times. The SMTP encryption key is stored in `storage/smtp.key`; back it up securely with the database.
 
-## ডেটা ও নিরাপত্তা
+## Payment methods and PDF view
 
-- Admin login, password hashing ও CSRF token আছে।
-- টাকা পয়সায় integer হিসেবে সংরক্ষণ করা হয়। অতিরিক্ত কালেকশন বন্ধ করা আছে।
-- `storage/.htaccess` Apache-তে ডেটাবেস ডাউনলোড বন্ধ করে। Built-in server-এর `router.php`-ও এটি বন্ধ করে।
-- লাইভ deployment-এ HTTPS, নিয়মিত MySQL backup, এবং প্রকৃত payment gateway যোগ করতে হবে।
+Payment Methods supports bank, MFS, card, and other channels. Each method can store account details, a mobile number, branch or routing information, payment instructions, and a QR image. Methods can be enabled or disabled. If an invoice has no selected method, all active methods appear in its details and PDF; otherwise only the selected method appears.
+
+PDF View opens a one page A4 invoice in a new tab with payment details and compact QR codes. PDF generation uses mPDF, so a new installation requires `composer install` or a complete uploaded `vendor/` directory.
+
+## Data and security
+
+- Admin authentication uses password hashing and CSRF tokens.
+- Money is stored as integer cents, and overpayment is rejected.
+- `storage/.htaccess` blocks direct downloads on Apache; `router.php` applies the same protection to the built in server.
+- Production deployments should use HTTPS, regular MySQL backups, and a verified payment gateway when online payments are added.

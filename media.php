@@ -10,16 +10,16 @@ function uploaded_asset_url(string $path): string
 function store_uploaded_image(?array $upload, string $kind): ?string
 {
     if (!$upload || ($upload['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) return null;
-    if (!in_array($kind, ['logo', 'favicon', 'qr', 'signature'], true)) throw new InvalidArgumentException('আপলোডের ধরন সঠিক নয়।');
+    if (!in_array($kind, ['logo', 'favicon', 'qr', 'signature'], true)) throw new InvalidArgumentException('Invalid upload type.');
     if (($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        throw new InvalidArgumentException('ছবি আপলোড করা যায়নি। আবার চেষ্টা করুন।');
+        throw new InvalidArgumentException('The image could not be uploaded. Please try again.');
     }
     $temp = (string)($upload['tmp_name'] ?? '');
-    if ($temp === '' || !is_uploaded_file($temp)) throw new InvalidArgumentException('সঠিক আপলোড ফাইল পাওয়া যায়নি।');
+    if ($temp === '' || !is_uploaded_file($temp)) throw new InvalidArgumentException('No valid uploaded file was found.');
     $size = filesize($temp);
     $limit = $kind === 'favicon' ? 1024 * 1024 : 3 * 1024 * 1024;
     if ($size === false || $size < 1 || $size > $limit) {
-        throw new InvalidArgumentException($kind === 'favicon' ? 'Favicon সর্বোচ্চ ১ MB হতে পারে।' : 'ছবি সর্বোচ্চ ৩ MB হতে পারে।');
+        throw new InvalidArgumentException($kind === 'favicon' ? 'Favicon must be 1 MB or smaller.' : 'Image must be 3 MB or smaller.');
     }
 
     $extension = null;
@@ -32,10 +32,10 @@ function store_uploaded_image(?array $upload, string $kind): ?string
         };
         $maxDimension = $kind === 'favicon' ? 512 : 4096;
         if (!$extension || $image[0] < 1 || $image[1] < 1 || $image[0] > $maxDimension || $image[1] > $maxDimension) {
-            throw new InvalidArgumentException('ছবির ফরম্যাট বা আকার সঠিক নয়।');
+            throw new InvalidArgumentException('The image format or dimensions are invalid.');
         }
         if ($kind === 'favicon' && $extension === 'jpg') {
-            throw new InvalidArgumentException('Favicon-এর জন্য PNG, WebP বা ICO ব্যবহার করুন।');
+            throw new InvalidArgumentException('Use a PNG, WebP, or ICO file for the favicon.');
         }
     } elseif ($kind === 'favicon') {
         $handle = fopen($temp, 'rb');
@@ -45,7 +45,7 @@ function store_uploaded_image(?array $upload, string $kind): ?string
             $extension = 'ico';
         }
     }
-    if (!$extension) throw new InvalidArgumentException('PNG, JPG বা WebP ছবি দিন। Favicon-এর জন্য ICO-ও চলবে।');
+    if (!$extension) throw new InvalidArgumentException('Use a PNG, JPG, or WebP image. ICO is also supported for favicons.');
 
     $directory = __DIR__ . '/assets/uploads';
     if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {

@@ -16,7 +16,7 @@ function e(mixed $value): string { return htmlspecialchars((string)$value, ENT_Q
 function url(string $page, array $params = []): string { return 'index.php?' . http_build_query(['page' => $page] + $params); }
 function favicon_tag(): string { return ''; }
 function format_date(?string $date): string { return $date ? date('d M Y', strtotime($date)) : '—'; }
-function status_label(string $value): string { return ['paid' => 'পরিশোধিত', 'partial' => 'আংশিক', 'overdue' => 'মেয়াদোত্তীর্ণ', 'unpaid' => 'অপরিশোধিত'][$value] ?? $value; }
+function status_label(string $value): string { return ['paid' => 'Paid', 'partial' => 'Partial', 'overdue' => 'Overdue', 'unpaid' => 'Unpaid'][$value] ?? $value; }
 
 function expect(bool $condition, string $message): void
 {
@@ -79,6 +79,13 @@ try {
     expect((int)query_one('SELECT COUNT(*) total FROM invoices WHERE recurrence_id=(SELECT recurrence_id FROM invoices WHERE id=?)', [$second])['total'] === $generated + 1, 'Recurring invoice count');
     expect(next_cycle_date('2026-01-31', 'monthly', 31, 1) === '2026-02-28', 'Month-end billing in February');
     expect(next_cycle_date('2026-02-28', 'monthly', 31, 1) === '2026-03-31', 'Month-end billing returns to anchor day');
+    expect(next_cycle_date('2026-01-31', 'half_yearly', 31, 1) === '2026-07-31', 'Half-yearly billing cycle');
+    expect(next_cycle_date('2026-01-31', 'quinquennial', 31, 1) === '2031-01-31', 'Quinquennial billing cycle');
+    $recurrenceId = (int)query_one('SELECT recurrence_id FROM invoices WHERE id=?', [$second])['recurrence_id'];
+    update_recurrence_frequency($recurrenceId, 'half_yearly');
+    expect(query_one('SELECT frequency FROM recurrences WHERE id=?', [$recurrenceId])['frequency'] === 'half_yearly', 'Billing cycle must be editable');
+    expect((int)query_one('SELECT auto_send FROM email_deliveries WHERE invoice_id=?', [$first])['auto_send'] === 0, 'Manual invoices must wait for Send Mail');
+    expect((int)query_one('SELECT COUNT(*) total FROM email_deliveries WHERE auto_send=1')['total'] >= $generated, 'Generated recurring invoices must be marked for automatic email');
     $originalNumber = query_one('SELECT number FROM invoices WHERE id=?', [$first])['number'];
     $reduced = array_replace($base, ['client_name' => 'Edited Recipient', 'client_phone' => '01722222222', 'item_service_id' => [''], 'item_name' => ['Reduced bill'], 'item_description' => [''], 'item_qty' => ['1'], 'item_price' => ['1600']]);
     try {
@@ -100,6 +107,14 @@ try {
         throw new RuntimeException('Inactive method should be rejected for new invoices');
     } catch (InvalidArgumentException $expected) {}
     expect((int)query_one('SELECT COUNT(*) total FROM clients')['total'] === 2, 'Changed phone must link a new client account');
+    $multiBase = array_replace($base, ['client_name'=>'Allocation Client','client_phone'=>'01912345678','client_email'=>'allocation@example.test','company_name'=>'Allocation Co','item_service_id'=>[''],'item_name'=>['Allocation item'],'item_description'=>[''],'item_qty'=>['1'],'payment_method_id'=>'']);
+    $allocationOne = create_invoice(array_replace($multiBase, ['invoice_type'=>'one_time','item_price'=>['100']]));
+    $allocationTwo = create_invoice(array_replace($multiBase, ['invoice_type'=>'one_time','item_price'=>['200']]));
+    $receipt = collect_multiple_invoices([$allocationTwo, $allocationOne], '150', '10', 'one_time', 'cash', 'MULTI-1', 'Allocation test', date('Y-m-d'));
+    expect(str_starts_with($receipt, 'MR-') && (int)query_one('SELECT COUNT(*) total FROM payments WHERE receipt_number=?', [$receipt])['total'] === 2, 'Multi-invoice collection must create one receipt with allocations');
+    expect(invoice_status(invoice_rows('WHERE i.id=?', [$allocationOne])[0]) === 'paid', 'First selected invoice must become fully paid');
+    $allocationSecondRow = invoice_rows('WHERE i.id=?', [$allocationTwo])[0];
+    expect(invoice_status($allocationSecondRow) === 'partial' && (int)$allocationSecondRow['paid_cents'] === 6000, 'Remaining collection and discount must continue into the second invoice');
     $manualClientId = create_client_account(['client_name' => 'Manual Client', 'company_name' => 'Manual Co', 'client_address' => 'Dhaka, Bangladesh', 'client_phone' => '01812345678', 'client_email' => 'manual@example.test']);
     expect((int)query_one('SELECT COUNT(*) total FROM clients WHERE id=? AND company_name=? AND address=?', [$manualClientId, 'Manual Co', 'Dhaka, Bangladesh'])['total'] === 1, 'Client page must create a standalone client account with address');
     try {
@@ -156,7 +171,7 @@ try {
     db();
     expect(query_one('SELECT password_hash FROM admins WHERE email=?', [DEFAULT_SUPER_ADMIN_EMAIL])['password_hash'] === $changedHash, 'One-time seed must preserve later password changes');
     expect(setting('site_title') === 'Test Billing' && setting('smtp_host') === 'smtp.example.test', 'Settings must survive database reopen');
-    echo "Smoke test passed: invoice edits, payment methods, one-page inline PDF, settings persistence, collection, recurring generation.\n";
+    echo "Smoke test passed: modules, invoice edits, billing cycles, multi-invoice collection, discounts, receipts, PDF, email queue, and recurring generation.\n";
 } finally {
     $pdo = null;
     close_db();
