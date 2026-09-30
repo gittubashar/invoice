@@ -5,7 +5,8 @@ if ($path === false) throw new RuntimeException('Temporary path unavailable');
 unlink($path);
 putenv('INVOICE_DB_PATH=' . $path);
 $_SERVER['REQUEST_METHOD'] = 'GET';
-$_GET['page'] = $argv[1] ?? 'payment-methods';
+$fixturePage = $argv[1] ?? 'payment-methods';
+$_GET['page'] = in_array($fixturePage, ['collections-unselected', 'collections-search'], true) ? 'collections' : $fixturePage;
 if ($_GET['page'] === 'clients') $_GET['add'] = 1;
 if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard', 'collections', 'client', 'client-ledger', 'receipt', 'new-prefill'], true)) {
     require_once dirname(__DIR__) . '/db.php';
@@ -28,12 +29,17 @@ if ($_GET['page'] === 'client') {
     ]);
     $_GET['edit'] = 1;
 }
-if ($_GET['page'] === 'collections') {
-    $_GET['id'] = create_invoice([
+if ($_GET['page'] === 'collections' && $fixturePage !== 'collections-unselected') {
+    $collectionInvoiceId = create_invoice([
         'client_name' => 'Collection Client', 'client_phone' => '01712345678', 'invoice_type' => 'one_time',
         'issue_date' => date('Y-m-d'), 'due_date' => add_days(date('Y-m-d'), 7),
         'item_service_id' => [''], 'item_name' => ['Collection test'], 'item_description' => [''], 'item_qty' => ['1'], 'item_price' => ['100'],
     ]);
+    $_GET['q'] = 'Collection Client';
+    if ($fixturePage === 'collections') {
+        $_GET['id'] = $collectionInvoiceId;
+        $_GET['client_id'] = (int)query_one('SELECT client_id FROM invoices WHERE id=?', [$collectionInvoiceId])['client_id'];
+    }
 }
 if (in_array($_GET['page'], ['client-ledger', 'receipt'], true)) {
     $ledgerInvoice = create_invoice([
@@ -58,7 +64,20 @@ if ($_GET['page'] === 'payment-methods' && (!str_contains($html, 'name="qr_file"
 if ($_GET['page'] === 'new' && !str_contains($html, 'name="payment_method_id"')) throw new RuntimeException('Invoice payment method selector did not render');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"'))) throw new RuntimeException('Client creation form did not render');
 if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client'))) throw new RuntimeException('Client update/delete controls did not render');
-if ($_GET['page'] === 'collections' && (!str_contains($html, 'name="action" value="collect_invoice_collection"') || !str_contains($html, 'name="action" value="collect_multiple_invoices"') || !str_contains($html, 'name="invoice_ids[]"') || !str_contains($html, 'name="discount"'))) throw new RuntimeException('Invoice collection forms did not render');
+if ($_GET['page'] === 'collections') {
+    if (!str_contains($html, 'name="q"') || !str_contains($html, 'Name, mobile number, or email') || !str_contains($html, 'data-collection-client-search') || !str_contains($html, 'data-search-url=')) throw new RuntimeException('Live client collection search did not render');
+    if ($fixturePage === 'collections-unselected') {
+        if (!str_contains($html, 'Select a client to view invoices') || str_contains($html, 'name="invoice_ids[]"')) throw new RuntimeException('Unselected collections page must not list invoices');
+    } elseif ($fixturePage === 'collections-search') {
+        if (!str_contains($html, 'class="collection-client-results"') || !str_contains($html, 'client_id=')) throw new RuntimeException('Client search results did not render as selectable links');
+        if (str_contains($html, 'name="invoice_ids[]"')) throw new RuntimeException('Searching clients must not expose invoices before client selection');
+    } else {
+        if (!str_contains($html, 'name="action" value="collect_invoice_collection"') || !str_contains($html, 'name="action" value="collect_multiple_invoices"') || !str_contains($html, 'name="invoice_ids[]"') || !str_contains($html, 'name="discount"')) throw new RuntimeException('Invoice collection forms did not render');
+        $invoicePosition = strpos($html, 'OUTSTANDING INVOICES');
+        $formPosition = strpos($html, 'SINGLE INVOICE COLLECTION');
+        if ($invoicePosition === false || $formPosition === false || $formPosition < $invoicePosition) throw new RuntimeException('Collection form must render below client invoices');
+    }
+}
 if ($_GET['page'] === 'new' && isset($_GET['client_id']) && !str_contains($html, 'Prefilled Client')) throw new RuntimeException('Client profile invoice prefill did not render');
 if ($_GET['page'] === 'client-ledger' && !str_contains($html, 'LEDGER HISTORY')) throw new RuntimeException('Client ledger did not render');
 if ($_GET['page'] === 'receipt' && !str_contains($html, 'MONEY RECEIPT')) throw new RuntimeException('Money receipt did not render');
@@ -80,7 +99,7 @@ if ($_GET['page'] === 'invoice-dashboard') {
     foreach (['clients', 'services', 'payment-methods', 'settings'] as $target) if (!str_contains($html, 'href="' . e(url($target)) . '"')) throw new RuntimeException('Module does not link directly to control page: ' . $target);
     foreach (['clients-dashboard', 'services-dashboard', 'payments-dashboard', 'settings-dashboard'] as $legacyTarget) if (str_contains($html, 'href="' . e(url($legacyTarget)) . '"')) throw new RuntimeException('Module still links to redundant overview page: ' . $legacyTarget);
 }
-echo "Page render passed: {$_GET['page']}\n";
+echo "Page render passed: {$fixturePage}\n";
 session_destroy();
 close_db();
 foreach ([$path, $path . '-wal', $path . '-shm'] as $file) if (is_file($file)) unlink($file);

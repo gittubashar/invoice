@@ -595,10 +595,10 @@ function search_clients(string $term, int $limit = 8): array
     return query_all(
         'SELECT id, name, company_name, address, phone, COALESCE(email, \'\') email
          FROM clients
-         WHERE phone LIKE ? OR lower(COALESCE(email, \'\')) LIKE ?
-         ORDER BY CASE WHEN phone = ? OR lower(COALESCE(email, \'\')) = ? THEN 0 ELSE 1 END, name
+         WHERE phone LIKE ? OR lower(COALESCE(email, \'\')) LIKE ? OR lower(name) LIKE ?
+         ORDER BY CASE WHEN phone = ? OR lower(COALESCE(email, \'\')) = ? OR lower(name) = ? THEN 0 ELSE 1 END, name
          LIMIT ' . max(1, min(20, $limit)),
-        [$phoneLike, $emailLike, $digits, $emailTerm]
+        [$phoneLike, $emailLike, $emailLike, $digits, $emailTerm, $emailTerm]
     );
 }
 

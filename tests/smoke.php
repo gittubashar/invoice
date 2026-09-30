@@ -52,8 +52,10 @@ try {
     expect((int)query_one('SELECT COUNT(*) total FROM clients')['total'] === 1, 'Phone must reuse client');
     $phoneMatches = search_clients('017123');
     $emailMatches = search_clients('test@example');
+    $nameMatches = search_clients('Test Client');
     expect(count($phoneMatches) === 1 && $phoneMatches[0]['name'] === 'Test Client', 'Client live search must match a partial phone number');
     expect(count($emailMatches) === 1 && $emailMatches[0]['phone'] === '01712345678', 'Client live search must match a partial email address');
+    expect(count($nameMatches) === 1 && $nameMatches[0]['phone'] === '01712345678', 'Client search must match a client name');
     expect(query_one('SELECT billing_name FROM invoices WHERE id=?', [$first])['billing_name'] === 'Test Client', 'Invoice must snapshot billing name');
     expect(query_one('SELECT company_name FROM clients LIMIT 1')['company_name'] === 'Renamed Ltd', 'Client company must update when explicitly provided');
     expect(query_one('SELECT billing_company_name FROM invoices WHERE id=?', [$first])['billing_company_name'] === 'Example Ltd', 'Old invoice company snapshot must remain unchanged');

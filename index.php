@@ -210,7 +210,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $amount = $collectionType === 'full' ? number_format($remaining / 100, 2, '.', '') : (string)($_POST['amount'] ?? '');
             collect_payment($id, $amount, (string)($_POST['method'] ?? ''), (string)($_POST['reference'] ?? ''), (string)($_POST['notes'] ?? ''), (string)($_POST['paid_at'] ?? ''));
             flash('success', $collectionType === 'full' ? 'The full payment has been collected.' : 'The partial payment has been collected.');
-            redirect('collections');
+            redirect('collections', ['client_id' => (int)$invoice['client_id']]);
         }
         if ($action === 'collect_multiple_invoices') {
             $receipt = collect_multiple_invoices((array)($_POST['invoice_ids'] ?? []), (string)($_POST['amount'] ?? ''), (string)($_POST['discount'] ?? ''), (string)($_POST['discount_scope'] ?? ''), (string)($_POST['method'] ?? ''), (string)($_POST['reference'] ?? ''), (string)($_POST['notes'] ?? ''), (string)($_POST['paid_at'] ?? ''));
@@ -269,11 +269,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'collect_payment') redirect('invoice', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
         if ($action === 'collect_invoice_collection') {
             $_SESSION['old_collection'] = $_POST;
-            redirect('collections', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
+            redirect('collections', ['client_id' => (int)($_POST['client_id'] ?? 0), 'id' => (int)($_POST['invoice_id'] ?? 0)]);
         }
         if ($action === 'collect_multiple_invoices') {
             $_SESSION['old_collection'] = $_POST;
-            redirect('collections');
+            redirect('collections', ['client_id' => (int)($_POST['client_id'] ?? 0)]);
         }
         if ($action === 'retry_invoice_email') redirect('invoice', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
         if ($action === 'login') redirect('login');
@@ -558,46 +558,8 @@ case 'invoices':
     end_page(); break;
 
 case 'collections':
-    $search = trim((string)($_GET['q'] ?? ''));
-    $where = '';
-    $params = [];
-    if ($search !== '') {
-        $where = 'WHERE (i.number LIKE ? OR i.billing_name LIKE ? OR i.billing_phone LIKE ? OR i.billing_company_name LIKE ?)';
-        $params = array_fill(0, 4, '%' . $search . '%');
-    }
-    $outstandingInvoices = array_values(array_filter(invoice_rows($where, $params, 'i.id DESC', 500), static fn(array $row): bool => (int)$row['paid_cents'] < (int)$row['total_cents']));
-    $outstandingTotal = array_sum(array_map(static fn(array $row): int => (int)$row['total_cents'] - (int)$row['paid_cents'], $outstandingInvoices));
-    $selectedId = (int)($_GET['id'] ?? 0);
-    $selectedInvoice = $selectedId ? (invoice_rows('WHERE i.id=?', [$selectedId], 'i.id DESC', 1)[0] ?? null) : null;
-    if ($selectedInvoice && (int)$selectedInvoice['paid_cents'] >= (int)$selectedInvoice['total_cents']) $selectedInvoice = null;
-    $oldCollection = $_SESSION['old_collection'] ?? []; unset($_SESSION['old_collection']);
-    $recentCollections = query_all('SELECT p.*, i.number, i.billing_name FROM payments p JOIN invoices i ON i.id=p.invoice_id ORDER BY p.id DESC LIMIT 50');
-    begin_page('Invoice Collections', $page, 'Record partial or full payments and review recent transactions.');
-    if ($selectedInvoice) {
-        $remaining = (int)$selectedInvoice['total_cents'] - (int)$selectedInvoice['paid_cents'];
-        $collectionType = (string)($oldCollection['collection_type'] ?? 'partial');
-        echo '<section class="panel form-panel collection-page-form"><div class="collection-form-heading"><div><span class="eyebrow">COLLECT PAYMENT</span><h2>' . e($selectedInvoice['number']) . ' · ' . e($selectedInvoice['client_name']) . '</h2><p>Current balance: <strong>' . format_money($remaining) . '</strong></p></div><a class="btn btn-outline btn-sm" href="' . e(url('collections', ['q' => $search])) . '">Close</a></div><form method="post" class="stack-form" data-collection-form data-remaining="' . e(number_format($remaining / 100, 2, '.', '')) . '">' . csrf_field() . '<input type="hidden" name="action" value="collect_invoice_collection"><input type="hidden" name="invoice_id" value="' . (int)$selectedInvoice['id'] . '"><div class="type-choice"><label><input type="radio" name="collection_type" value="partial"' . ($collectionType === 'partial' ? ' checked' : '') . '><span class="type-card"><strong>Partial Collection</strong><small>Collect part of the outstanding balance</small></span></label><label><input type="radio" name="collection_type" value="full"' . ($collectionType === 'full' ? ' checked' : '') . '><span class="type-card"><strong>Full Payment</strong><small>Collect the entire outstanding balance</small></span></label></div><div class="form-grid"><label>Collection Amount (BDT)<input type="number" name="amount" data-collection-amount required min="0.01" max="' . e(number_format($remaining / 100, 2, '.', '')) . '" step="0.01" value="' . e($oldCollection['amount'] ?? '') . '" placeholder="0.00"></label><label>Payment Method<select name="method" required><option value="cash">Cash</option><option value="bank">Bank Transfer</option><option value="bkash">bKash</option><option value="nagad">Nagad</option><option value="card">Card</option><option value="other">Other</option></select></label><label>Date<input type="date" name="paid_at" required value="' . e($oldCollection['paid_at'] ?? date('Y-m-d')) . '"></label><label>Transaction Reference <small>(Optional)</small><input name="reference" maxlength="120" value="' . e($oldCollection['reference'] ?? '') . '" placeholder="Transaction ID"></label><label class="field-wide">Notes <small>(Optional)</small><textarea name="notes" rows="2" maxlength="500" placeholder="Payment details">' . e($oldCollection['notes'] ?? '') . '</textarea></label></div><div class="client-create-actions"><button class="btn btn-primary" type="submit">Save Collection</button></div></form></section>';
-    }
-    echo '<form method="post" data-multi-collection>' . csrf_field() . '<input type="hidden" name="action" value="collect_multiple_invoices"><div class="panel bulk-collection-bar"><label>Collection Amount (BDT)<input type="number" name="amount" min="0.01" step="0.01" required placeholder="0.00"></label><label>Partial Discount (BDT)<input type="number" name="discount" min="0" step="0.01" value="0.00"></label><div><span class="form-label">Confirm Discount Type</span><label class="checkbox-line"><input type="radio" name="discount_scope" value="one_time"> One-time Invoices</label><label class="checkbox-line"><input type="radio" name="discount_scope" value="recurring"> Recurring Invoices</label></div><label>Payment Method<select name="method" required><option value="cash">Cash</option><option value="bank">Bank Transfer</option><option value="bkash">bKash</option><option value="nagad">Nagad</option><option value="card">Card</option><option value="other">Other</option></select></label><label>Date<input type="date" name="paid_at" required value="' . e(date('Y-m-d')) . '"></label><label>Transaction Reference <small>(Optional)</small><input name="reference" maxlength="120" placeholder="Transaction ID"></label><label class="field-wide">Notes <small>(Optional)</small><textarea name="notes" rows="2" maxlength="500" placeholder="Payment or discount details"></textarea></label><div class="bulk-actions"><button class="btn btn-primary btn-wide" type="submit">Collect Selected Invoices</button></div></div><section class="panel collection-list-panel"><div class="toolbar"><div class="search-form">' . icon('search', 18) . '<input type="search" data-invoice-filter placeholder="Filter the invoices below"></div><div class="collection-summary"><span data-selected-count>0 selected</span><strong data-selected-total>BDT 0</strong></div></div>';
-    if (!$outstandingInvoices) echo '<div class="empty-state">' . icon('check', 34) . '<h3>No outstanding invoices</h3><p>All invoices have been paid in full.</p></div>';
-    else {
-        echo '<div class="table-wrap"><table><thead><tr><th><input class="collection-select" type="checkbox" data-select-all aria-label="Select all invoices"></th><th>Invoice</th><th>Client</th><th>Total</th><th>Collection</th><th>Discount</th><th>Balance Due</th><th>Status</th><th></th></tr></thead><tbody>';
-        foreach ($outstandingInvoices as $row) {
-            $due = (int)$row['total_cents'] - (int)$row['paid_cents'];
-            echo '<tr data-invoice-row data-search="' . e(strtolower($row['number'].' '.$row['client_name'].' '.$row['client_phone'])) . '"><td><input class="collection-select" type="checkbox" name="invoice_ids[]" value="' . (int)$row['id'] . '" data-balance="' . e((string)$due) . '" aria-label="Select ' . e($row['number']) . '"></td><td><a class="strong-link" href="' . e(url('invoice', ['id' => $row['id']])) . '">' . e($row['number']) . '</a><small>' . e(format_date($row['due_date'])) . '</small></td><td><strong>' . e($row['client_name']) . '</strong><small>' . e($row['client_phone']) . '</small></td><td><strong>' . format_money((int)$row['total_cents']) . '</strong></td><td>' . format_money(max(0,(int)$row['paid_cents']-(int)$row['discount_cents'])) . '</td><td>' . format_money((int)$row['discount_cents']) . '</td><td><strong>' . format_money($due) . '</strong></td><td>' . badge($row) . '</td><td><a class="btn btn-outline btn-sm" href="' . e(url('collections', ['id' => $row['id'], 'q' => $search])) . '">Single</a></td></tr>';
-        }
-        echo '</tbody></table></div>';
-    }
-    echo '</section></form><section class="panel collection-history-panel"><div class="panel-heading"><div><span class="eyebrow">RECENT COLLECTIONS</span><h2>Recent Collections</h2></div><span class="count-pill">' . count($recentCollections) . '</span></div>';
-    if (!$recentCollections) echo '<div class="empty-state"><p>No collections have been recorded yet.</p></div>';
-    else {
-        echo '<div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Method</th><th>Date</th><th>Reference</th></tr></thead><tbody>';
-        $methodLabels = ['cash'=>'Cash','bank'=>'Bank Transfer','bkash'=>'bKash','nagad'=>'Nagad','card'=>'Card','other'=>'Other'];
-        foreach ($recentCollections as $payment) echo '<tr><td><a class="strong-link" href="' . e(url('invoice', ['id' => $payment['invoice_id']])) . '">' . e($payment['number']) . '</a></td><td>' . e($payment['billing_name']) . '</td><td><strong>' . format_money((int)$payment['amount_cents']) . '</strong></td><td>' . e($methodLabels[$payment['method']] ?? $payment['method']) . '</td><td>' . e(format_date($payment['paid_at'])) . '</td><td>' . e($payment['reference'] ?: '—') . '</td></tr>';
-        echo '</tbody></table></div>';
-    }
-    echo '</section>';
-    end_page(); break;
+    require __DIR__ . '/collections_page.php';
+    break;
 
 case 'new':
     $old = $_SESSION['old_invoice'] ?? []; unset($_SESSION['old_invoice']);

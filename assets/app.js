@@ -122,25 +122,107 @@
 
   const multiCollection = document.querySelector('[data-multi-collection]');
   if (multiCollection) {
-    const boxes = [...multiCollection.querySelectorAll('input[name="invoice_ids[]"]')];
-    const selectAll = multiCollection.querySelector('[data-select-all]');
-    const count = multiCollection.querySelector('[data-selected-count]');
-    const total = multiCollection.querySelector('[data-selected-total]');
-    const filter = multiCollection.querySelector('[data-invoice-filter]');
+    const workspace = document.querySelector('[data-collection-workspace]');
+    const boxes = [...document.querySelectorAll('input[name="invoice_ids[]"][form="bulk-collection-form"]')];
+    const selectAll = workspace?.querySelector('[data-select-all]');
+    const counts = [...document.querySelectorAll('[data-selected-count]')];
+    const totals = [...document.querySelectorAll('[data-selected-total]')];
     const refreshSelected = () => {
       const selected = boxes.filter(box => box.checked);
       const cents = selected.reduce((sum, box) => sum + Number(box.dataset.balance || 0), 0);
-      if (count) count.textContent = `${selected.length} selected`;
-      if (total) total.textContent = `BDT ${new Intl.NumberFormat('en-BD', { maximumFractionDigits: 2 }).format(cents / 100)}`;
+      counts.forEach(count => { count.textContent = `${selected.length} selected`; });
+      totals.forEach(total => { total.textContent = `BDT ${new Intl.NumberFormat('en-BD', { maximumFractionDigits: 2 }).format(cents / 100)}`; });
       if (selectAll) selectAll.checked = boxes.length > 0 && selected.length === boxes.length;
     };
     boxes.forEach(box => box.addEventListener('change', refreshSelected));
     selectAll?.addEventListener('change', () => { boxes.forEach(box => { box.checked = selectAll.checked; }); refreshSelected(); });
-    filter?.addEventListener('input', () => {
-      const query = filter.value.trim().toLowerCase();
-      multiCollection.querySelectorAll('[data-invoice-row]').forEach(row => { row.hidden = query !== '' && !row.dataset.search.includes(query); });
-    });
     refreshSelected();
+  }
+
+  const collectionClientSearch = document.querySelector('[data-collection-client-search]');
+  if (collectionClientSearch) {
+    const input = collectionClientSearch.querySelector('[data-collection-client-input]');
+    const results = document.querySelector('[data-collection-client-results]');
+    let timer = 0;
+    let controller;
+    const hideResults = () => {
+      if (!results) return;
+      results.hidden = true;
+      results.replaceChildren();
+    };
+    const clientUrl = client => {
+      const target = new URL(collectionClientSearch.dataset.selectUrl, window.location.href);
+      target.searchParams.set('client_id', client.id);
+      target.searchParams.set('q', input.value.trim());
+      return target.toString();
+    };
+    const renderClients = clients => {
+      if (!results) return;
+      results.replaceChildren();
+      if (!clients.length) {
+        const empty = document.createElement('div');
+        empty.className = 'collection-client-empty';
+        empty.textContent = 'No matching client was found.';
+        results.append(empty);
+      } else {
+        clients.forEach(client => {
+          const link = document.createElement('a');
+          link.href = clientUrl(client);
+          const avatar = document.createElement('span');
+          avatar.className = 'client-avatar';
+          avatar.textContent = client.name.slice(0, 1).toUpperCase();
+          const identity = document.createElement('span');
+          const name = document.createElement('strong');
+          const company = document.createElement('small');
+          name.textContent = client.name;
+          company.textContent = client.company_name || 'No company name';
+          identity.append(name, company);
+          const contact = document.createElement('span');
+          contact.className = 'collection-client-contact';
+          contact.append(document.createTextNode(client.phone));
+          if (client.email) {
+            const email = document.createElement('small');
+            email.textContent = client.email;
+            contact.append(email);
+          }
+          const arrow = document.createElement('span');
+          arrow.className = 'collection-live-arrow';
+          arrow.textContent = '›';
+          link.append(avatar, identity, contact, arrow);
+          results.append(link);
+        });
+      }
+      results.hidden = false;
+    };
+    const searchClients = async () => {
+      const query = input?.value.trim() || '';
+      if (query.length < 2) {
+        controller?.abort();
+        hideResults();
+        return;
+      }
+      controller?.abort();
+      controller = new AbortController();
+      const endpoint = new URL(collectionClientSearch.dataset.searchUrl, window.location.href);
+      endpoint.searchParams.set('q', query);
+      try {
+        const response = await fetch(endpoint, { headers: { Accept: 'application/json' }, signal: controller.signal });
+        if (!response.ok) throw new Error('Search failed');
+        renderClients(await response.json());
+      } catch (error) {
+        if (error.name !== 'AbortError') hideResults();
+      }
+    };
+    input?.addEventListener('input', () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(searchClients, 250);
+    });
+    input?.addEventListener('focus', () => {
+      if (input.value.trim().length >= 2) searchClients();
+    });
+    document.addEventListener('click', event => {
+      if (!collectionClientSearch.contains(event.target) && !results?.contains(event.target)) hideResults();
+    });
   }
 
   const form = document.getElementById('invoice-form');
