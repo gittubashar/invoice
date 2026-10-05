@@ -350,14 +350,15 @@
     });
     document.getElementById('summary-count').textContent = items.length;
     const recurring = form.elements.invoice_type.value === 'recurring';
-    const discountActive = recurring && Boolean(discountEnabled?.checked);
+    const editing = form.elements.action.value === 'edit_invoice';
+    const discountActive = (recurring || editing) && Boolean(discountEnabled?.checked);
     const rawDiscount = parseFloat(form.elements.discount_value?.value) || 0;
     const discount = discountActive
       ? Math.min(total, form.elements.discount_type?.value === 'percent' ? total * Math.min(rawDiscount, 100) / 100 : rawDiscount)
       : 0;
-    document.getElementById('summary-subtotal').textContent = `BDT ${currency.format(total)}`;
-    document.getElementById('summary-discount').textContent = `BDT ${currency.format(discount)}`;
-    document.getElementById('summary-discount-row').hidden = !discountActive;
+    if (document.getElementById('summary-subtotal')) document.getElementById('summary-subtotal').textContent = `BDT ${currency.format(total)}`;
+    if (document.getElementById('summary-discount')) document.getElementById('summary-discount').textContent = `BDT ${currency.format(discount)}`;
+    if (document.getElementById('summary-discount-row')) document.getElementById('summary-discount-row').hidden = !discountActive;
     document.getElementById('summary-total').textContent = `BDT ${currency.format(Math.max(0, total - discount))}`;
     document.querySelectorAll('.recurring-field').forEach(el => {
       el.hidden = !recurring;

@@ -88,7 +88,7 @@ function deliver_invoice_email(array $delivery, bool $force = false): array
         $mail->isHTML(true);
         $siteTitle = setting('site_title', 'Billflow');
         $mail->Subject = 'Invoice ' . $invoice['number'] . ' - ' . $siteTitle;
-        $mail->Body = '<div style="font-family:Arial,sans-serif;color:#243d34;line-height:1.6"><h2 style="color:#0c826e">Invoice / Bill ' . e($invoice['number']) . '</h2><p>Dear ' . e($invoice['client_name']) . ',</p><p>Your invoice has been created. A PDF copy is attached to this email.</p><p><strong>Grand Total:</strong> ' . e(format_money((int)$invoice['total_cents'])) . '<br><strong>Due Date:</strong> ' . e(format_date($invoice['due_date'])) . '</p><p>Thank you,<br>' . e($siteTitle) . '</p></div>';
+        $mail->Body = '<div style="font-family:Arial,sans-serif;color:#243d34;line-height:1.6"><h2 style="color:#0c826e">Invoice / Bill ' . e($invoice['number']) . '</h2><p>Dear ' . e($invoice['client_name']) . ',</p><p>Your invoice PDF is attached to this email.</p><p><strong>Grand Total:</strong> ' . e(format_money((int)$invoice['total_cents'])) . '<br><strong>Due Date:</strong> ' . e(format_date($invoice['due_date'])) . '</p><p>Thank you,<br>' . e($siteTitle) . '</p></div>';
         $mail->AltBody = "Invoice {$invoice['number']}\nTotal: " . format_money((int)$invoice['total_cents']) . "\nDue date: " . format_date($invoice['due_date']) . "\n\n{$siteTitle}";
         $filename = preg_replace('/[^A-Za-z0-9_-]/', '_', (string)$invoice['number']) . '.pdf';
         $mail->addStringAttachment($pdf, $filename, PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64, 'application/pdf');

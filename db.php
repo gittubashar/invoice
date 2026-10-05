@@ -898,6 +898,20 @@ function calculate_invoice_discount(int $subtotalCents, array $rule): array
     return ['type' => $type, 'value' => $value, 'cents' => $cents, 'label' => $label];
 }
 
+function parse_invoice_discount(array $input, int $subtotalCents): array
+{
+    $mapped = $input;
+    $mapped['discount_scope'] = 'every_cycle';
+    $rule = parse_recurrence_discount($mapped, $subtotalCents);
+    $discount = calculate_invoice_discount($subtotalCents, $rule);
+    if ($discount['cents'] > 0 && trim((string)($input['discount_note'] ?? '')) === '') {
+        $discount['label'] = $discount['type'] === 'percent'
+            ? rtrim(rtrim(number_format($discount['value'] / 100, 2, '.', ''), '0'), '.') . '% invoice discount'
+            : 'Invoice discount';
+    }
+    return $discount;
+}
+
 function advance_recurrence_discount(PDO $pdo, int $recurrenceId, array $rule): array
 {
     if (($rule['scope'] ?? 'none') === 'next_invoice') {
@@ -936,6 +950,25 @@ function queue_invoice_email(PDO $pdo, int $invoiceId, string $recipient, bool $
         ? 'INSERT IGNORE INTO email_deliveries (invoice_id, recipient, auto_send) VALUES (?, ?, ?)'
         : 'INSERT OR IGNORE INTO email_deliveries (invoice_id, recipient, auto_send) VALUES (?, ?, ?)';
     $pdo->prepare($sql)->execute([$invoiceId, $recipient, $autoSend ? 1 : 0]);
+}
+
+function reset_invoice_email_delivery(PDO $pdo, int $invoiceId, string $recipient): void
+{
+    $recipient = mb_strtolower(trim($recipient));
+    $delivery = query_one('SELECT id FROM email_deliveries WHERE invoice_id=?', [$invoiceId]);
+    if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+        if ($delivery) {
+            $pdo->prepare("UPDATE email_deliveries SET recipient='', auto_send=0, status='skipped', attempts=0, last_error='A valid client email address was not provided.', sent_at=NULL, updated_at=? WHERE invoice_id=?")
+                ->execute([date('Y-m-d H:i:s'), $invoiceId]);
+        }
+        return;
+    }
+    if ($delivery) {
+        $pdo->prepare("UPDATE email_deliveries SET recipient=?, auto_send=0, status='pending', attempts=0, last_error='', next_attempt_at=?, sent_at=NULL, updated_at=? WHERE invoice_id=?")
+            ->execute([$recipient, date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), $invoiceId]);
+    } else {
+        queue_invoice_email($pdo, $invoiceId, $recipient);
+    }
 }
 
 function create_invoice(array $input): int
@@ -1005,23 +1038,19 @@ function edit_invoice(int $invoiceId, array $input): void
     try {
         $invoice = query_one('SELECT i.id, i.total_cents, i.payment_method_id, i.invoice_discount_type, i.invoice_discount_value, i.invoice_discount_label, COALESCE(SUM(p.amount_cents + p.discount_cents), 0) AS paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? GROUP BY i.id', [$invoiceId]);
         if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
-        $discount = calculate_invoice_discount($subtotal, [
-            'type' => $invoice['invoice_discount_type'],
-            'value' => (int)$invoice['invoice_discount_value'],
-            'scope' => $invoice['invoice_discount_type'] === 'none' ? 'none' : 'every_cycle',
-            'note' => $invoice['invoice_discount_label'],
-        ]);
+        $discount = parse_invoice_discount($input, $subtotal);
         $total = $subtotal - $discount['cents'];
         if ($total < (int)$invoice['paid_cents']) throw new InvalidArgumentException('The new invoice total cannot be less than the amount already collected.');
         $clientId = get_or_create_client($pdo, $name, $phone, $email, $companyName);
         $paymentMethodId = selected_payment_method_id($input, (int)$invoice['payment_method_id']);
-        $stmt = $pdo->prepare('UPDATE invoices SET client_id=?, billing_name=?, billing_phone=?, billing_email=?, billing_company_name=?, issue_date=?, due_date=?, notes=?, subtotal_cents=?, invoice_discount_cents=?, total_cents=?, payment_method_id=? WHERE id=?');
-        $stmt->execute([$clientId, $name, $phone, $email, $companyName, $issueDate, $dueDate, $notes, $subtotal, $discount['cents'], $total, $paymentMethodId, $invoiceId]);
+        $stmt = $pdo->prepare('UPDATE invoices SET client_id=?, billing_name=?, billing_phone=?, billing_email=?, billing_company_name=?, issue_date=?, due_date=?, notes=?, subtotal_cents=?, invoice_discount_type=?, invoice_discount_value=?, invoice_discount_cents=?, invoice_discount_label=?, total_cents=?, payment_method_id=? WHERE id=?');
+        $stmt->execute([$clientId, $name, $phone, $email, $companyName, $issueDate, $dueDate, $notes, $subtotal, $discount['type'], $discount['value'], $discount['cents'], $discount['label'], $total, $paymentMethodId, $invoiceId]);
         $pdo->prepare('DELETE FROM invoice_items WHERE invoice_id=?')->execute([$invoiceId]);
         $itemStmt = $pdo->prepare('INSERT INTO invoice_items (invoice_id, service_id, name, description, quantity, unit_price_cents, total_cents) VALUES (?, ?, ?, ?, ?, ?, ?)');
         foreach ($items as $item) {
             $itemStmt->execute([$invoiceId, $item['service_id'], $item['name'], $item['description'], $item['quantity'], $item['unit_price_cents'], $item['total_cents']]);
         }
+        reset_invoice_email_delivery($pdo, $invoiceId, $email);
         $pdo->commit();
     } catch (Throwable $error) {
         $pdo->rollBack();

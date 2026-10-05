@@ -109,6 +109,17 @@ try {
     $fixedDiscountInvoice = query_one('SELECT invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE recurrence_id=? ORDER BY id DESC LIMIT 1', [$discountedRecurrenceId]);
     expect((int)$fixedDiscountInvoice['invoice_discount_cents'] === 5000 && (int)$fixedDiscountInvoice['total_cents'] === 95000 && $fixedDiscountInvoice['invoice_discount_label'] === 'Retention credit', 'Edited fixed discount must apply to every future cycle');
     expect(query_one('SELECT discount_type FROM recurrences WHERE id=?', [$discountedRecurrenceId])['discount_type'] === 'fixed', 'Every-cycle discount must remain active after generation');
+    $resendInvoice = create_invoice(array_replace($base, ['invoice_type'=>'one_time', 'item_service_id'=>[''], 'item_name'=>['Discount resend'], 'item_description'=>[''], 'item_qty'=>['1'], 'item_price'=>['1000']]));
+    $pdo->prepare("UPDATE email_deliveries SET status='sent', sent_at=? WHERE invoice_id=?")->execute([date('Y-m-d H:i:s'), $resendInvoice]);
+    edit_invoice($resendInvoice, array_replace($base, [
+        'item_service_id'=>[''], 'item_name'=>['Discount resend'], 'item_description'=>[''], 'item_qty'=>['1'], 'item_price'=>['1000'],
+        'discount_enabled'=>'1', 'discount_type'=>'percent', 'discount_value'=>'15', 'discount_note'=>'Special client discount',
+    ]));
+    $resendRow = query_one('SELECT subtotal_cents, invoice_discount_type, invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE id=?', [$resendInvoice]);
+    expect((int)$resendRow['subtotal_cents'] === 100000 && (int)$resendRow['invoice_discount_cents'] === 15000 && (int)$resendRow['total_cents'] === 85000, 'An existing invoice must accept an invoice-level discount');
+    expect($resendRow['invoice_discount_type'] === 'percent' && $resendRow['invoice_discount_label'] === 'Special client discount', 'Edited invoice must snapshot its discount label');
+    $resendDelivery = query_one('SELECT status, sent_at, recipient FROM email_deliveries WHERE invoice_id=?', [$resendInvoice]);
+    expect($resendDelivery['status'] === 'pending' && $resendDelivery['sent_at'] === null && $resendDelivery['recipient'] === 'test@example.com', 'Editing an invoice must make its updated PDF ready to send again');
     expect((int)query_one('SELECT auto_send FROM email_deliveries WHERE invoice_id=?', [$first])['auto_send'] === 0, 'Manual invoices must wait for Send Mail');
     expect((int)query_one('SELECT COUNT(*) total FROM email_deliveries WHERE auto_send=1')['total'] >= $generated, 'Generated recurring invoices must be marked for automatic email');
     $originalNumber = query_one('SELECT number FROM invoices WHERE id=?', [$first])['number'];
