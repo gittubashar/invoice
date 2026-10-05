@@ -6,10 +6,26 @@ unlink($path);
 putenv('INVOICE_DB_PATH=' . $path);
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $fixturePage = $argv[1] ?? 'payment-methods';
-$_GET['page'] = in_array($fixturePage, ['collections-unselected', 'collections-search'], true) ? 'collections' : $fixturePage;
+$_GET['page'] = in_array($fixturePage, ['collections-unselected', 'collections-search'], true) ? 'collections' : (in_array($fixturePage, ['invoice-identity-on', 'invoice-identity-off'], true) ? 'invoice' : $fixturePage);
 if ($_GET['page'] === 'clients') $_GET['add'] = 1;
-if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard', 'collections', 'client', 'client-ledger', 'receipt', 'new-prefill'], true)) {
+if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard', 'collections', 'client', 'client-ledger', 'receipt', 'new-prefill', 'invoice', 'invoices', 'recurring'], true)) {
     require_once dirname(__DIR__) . '/db.php';
+}
+if ($_GET['page'] === 'invoices') {
+    create_invoice([
+        'client_name'=>'Purple Client','client_phone'=>'01412345678','client_email'=>'purple@example.test','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Mail test'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['100'],
+    ]);
+    $_GET['q'] = 'purple';
+}
+if (in_array($fixturePage, ['invoice-identity-on', 'invoice-identity-off'], true)) {
+    $_GET['id'] = create_invoice([
+        'client_name'=>'Identity Client','client_phone'=>'01312345678','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Identity test'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['100'],
+    ]);
+    $logos = array_values(array_filter(glob(dirname(__DIR__) . '/assets/uploads/*') ?: [], static fn(string $file): bool => (bool)preg_match('/[a-f0-9]{32}\.(?:png|jpg|webp)$/', basename($file))));
+    $enabled = $fixturePage === 'invoice-identity-on' ? '1' : '0';
+    save_settings(['site_title'=>'Fixture Brand','slogan'=>'Fixture Slogan','logo_path'=>$logos ? 'assets/uploads/' . basename($logos[0]) : '', 'pdf_show_logo'=>$enabled, 'pdf_show_title'=>$enabled, 'pdf_show_slogan'=>$enabled]);
 }
 if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard'], true)) {
     $dashboardInvoice = create_invoice([
@@ -17,6 +33,13 @@ if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard'], true)) {
         'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Dashboard subscription'],'item_description'=>['Monthly service'],'item_qty'=>['1'],'item_price'=>['1000'],
     ]);
     collect_payment($dashboardInvoice, '250', 'cash', 'DASHBOARD', '', date('Y-m-d'));
+}
+if ($_GET['page'] === 'recurring') {
+    create_invoice([
+        'client_name'=>'Recurring Client','client_phone'=>'01598765432','invoice_type'=>'recurring','frequency'=>'monthly',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Recurring plan'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['1000'],
+        'discount_enabled'=>'1','discount_type'=>'percent','discount_value'=>'12.5','discount_scope'=>'every_cycle','discount_note'=>'Fixture offer',
+    ]);
 }
 if ($_GET['page'] === 'new-prefill') {
     $_GET['page'] = 'new';
@@ -62,6 +85,8 @@ if (!str_contains($html, '<!doctype html>')) throw new RuntimeException('Page di
 if (str_contains($html, 'Simple billing, clear accounts') || str_contains($html, 'class="sidebar-note"')) throw new RuntimeException('Removed sidebar information card rendered');
 if ($_GET['page'] === 'payment-methods' && (!str_contains($html, 'name="qr_file"') || !str_contains($html, 'name="account_number"'))) throw new RuntimeException('Payment method form did not render');
 if ($_GET['page'] === 'new' && !str_contains($html, 'name="payment_method_id"')) throw new RuntimeException('Invoice payment method selector did not render');
+if ($_GET['page'] === 'new' && (!str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_type"') || !str_contains($html, 'name="discount_scope"') || !str_contains($html, 'id="summary-discount"'))) throw new RuntimeException('Recurring invoice discount controls did not render');
+if ($_GET['page'] === 'invoices' && (!str_contains($html, 'class="row-mail"') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="return_q" value="purple"'))) throw new RuntimeException('Invoice list Send Mail action did not render');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"'))) throw new RuntimeException('Client creation form did not render');
 if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client'))) throw new RuntimeException('Client update/delete controls did not render');
 if ($_GET['page'] === 'collections') {
@@ -81,6 +106,8 @@ if ($_GET['page'] === 'collections') {
 if ($_GET['page'] === 'new' && isset($_GET['client_id']) && !str_contains($html, 'Prefilled Client')) throw new RuntimeException('Client profile invoice prefill did not render');
 if ($_GET['page'] === 'client-ledger' && !str_contains($html, 'LEDGER HISTORY')) throw new RuntimeException('Client ledger did not render');
 if ($_GET['page'] === 'receipt' && !str_contains($html, 'MONEY RECEIPT')) throw new RuntimeException('Money receipt did not render');
+if ($fixturePage === 'invoice-identity-off' && (str_contains($html, 'class="paper-logo"') || str_contains($html, 'class="paper-brand"') || str_contains($html, 'class="paper-slogan"'))) throw new RuntimeException('Disabled invoice identity elements rendered');
+if ($fixturePage === 'invoice-identity-on' && (!str_contains($html, 'class="paper-brand"') || !str_contains($html, 'class="paper-slogan"'))) throw new RuntimeException('Enabled invoice title or slogan did not render');
 $modulePages = [
     'invoice-dashboard' => ['Invoice', 'Create Invoice', 'Recurring Billing'],
     'clients' => ['Clients', 'Client Ledger'],
@@ -99,6 +126,7 @@ if ($_GET['page'] === 'invoice-dashboard') {
     foreach (['clients', 'services', 'payment-methods', 'settings'] as $target) if (!str_contains($html, 'href="' . e(url($target)) . '"')) throw new RuntimeException('Module does not link directly to control page: ' . $target);
     foreach (['clients-dashboard', 'services-dashboard', 'payments-dashboard', 'settings-dashboard'] as $legacyTarget) if (str_contains($html, 'href="' . e(url($legacyTarget)) . '"')) throw new RuntimeException('Module still links to redundant overview page: ' . $legacyTarget);
 }
+if ($_GET['page'] === 'recurring' && (!str_contains($html, 'name="action" value="update_recurrence_discount"') || !str_contains($html, '12.5%') || !str_contains($html, 'Fixture offer'))) throw new RuntimeException('Recurring discount management did not render');
 echo "Page render passed: {$fixturePage}\n";
 session_destroy();
 close_db();

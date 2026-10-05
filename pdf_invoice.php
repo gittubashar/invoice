@@ -16,8 +16,10 @@ function invoice_pdf_html(array $invoice, array $items, array $methods, string $
     $showSlogan = setting('pdf_show_slogan', '1') === '1';
     $signature = uploaded_asset_url(setting('signature_path'));
     $signatureFile = $signature !== '' ? str_replace('\\', '/', __DIR__ . '/' . $signature) : '';
-    $discount = (int)($invoice['discount_cents'] ?? 0);
-    $collected = max(0, (int)$invoice['paid_cents'] - $discount);
+    $collectionDiscount = (int)($invoice['discount_cents'] ?? 0);
+    $invoiceDiscount = (int)($invoice['invoice_discount_cents'] ?? 0);
+    $subtotal = (int)($invoice['subtotal_cents'] ?? 0) ?: (int)$invoice['total_cents'];
+    $collected = max(0, (int)$invoice['paid_cents'] - $collectionDiscount);
     $due = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
     $status = invoice_status($invoice);
     $methodTypes = ['bank' => 'Bank', 'mfs' => 'Mobile Banking', 'card' => 'Card', 'other' => 'Other'];
@@ -98,7 +100,7 @@ table{border-collapse:collapse;width:100%}
 <?php endforeach; ?>
 </tbody></table>
 <table class="totals-wrap"><tr><td style="width:54%"><div class="thanks">Your trust is<br>our inspiration.</div></td><td style="width:46%">
-    <table class="totals"><tr><td>Subtotal</td><td><?= e(format_money((int)$invoice['total_cents'])) ?></td></tr><tr><td>Paid</td><td><?= e(format_money($collected)) ?></td></tr><?php if ($discount > 0): ?><tr><td>Discount</td><td><?= e(format_money($discount)) ?></td></tr><?php endif; ?><tr class="due-row"><td>Balance Due</td><td><?= e(format_money($due)) ?></td></tr></table>
+    <table class="totals"><tr><td>Subtotal</td><td><?= e(format_money($subtotal)) ?></td></tr><?php if ($invoiceDiscount > 0): ?><tr><td><?= e($invoice['invoice_discount_label'] ?: 'Invoice Discount') ?></td><td>− <?= e(format_money($invoiceDiscount)) ?></td></tr><?php endif; ?><tr><td>Grand Total</td><td><?= e(format_money((int)$invoice['total_cents'])) ?></td></tr><tr><td>Paid</td><td><?= e(format_money($collected)) ?></td></tr><?php if ($collectionDiscount > 0): ?><tr><td>Collection Discount</td><td><?= e(format_money($collectionDiscount)) ?></td></tr><?php endif; ?><tr class="due-row"><td>Balance Due</td><td><?= e(format_money($due)) ?></td></tr></table>
 </td></tr></table>
 <div class="payment-area"><h2>Payment Information</h2>
     <?php if (!$methods): ?><p>No payment methods have been added.</p><?php endif; ?>

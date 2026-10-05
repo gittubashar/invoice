@@ -140,6 +140,11 @@ CREATE TABLE IF NOT EXISTS recurrences (
     anchor_month INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused')),
     notes TEXT NOT NULL DEFAULT '',
+    discount_type TEXT NOT NULL DEFAULT 'none',
+    discount_value INTEGER NOT NULL DEFAULT 0,
+    discount_scope TEXT NOT NULL DEFAULT 'none',
+    discount_cycles_remaining INTEGER NOT NULL DEFAULT 0,
+    discount_note TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS recurrence_items (
@@ -164,6 +169,11 @@ CREATE TABLE IF NOT EXISTS invoices (
     issue_date TEXT NOT NULL,
     due_date TEXT NOT NULL,
     notes TEXT NOT NULL DEFAULT '',
+    subtotal_cents INTEGER NOT NULL DEFAULT 0,
+    invoice_discount_type TEXT NOT NULL DEFAULT 'none',
+    invoice_discount_value INTEGER NOT NULL DEFAULT 0,
+    invoice_discount_cents INTEGER NOT NULL DEFAULT 0,
+    invoice_discount_label TEXT NOT NULL DEFAULT '',
     total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (recurrence_id, cycle_date)
@@ -235,12 +245,31 @@ SQL);
     if (!in_array('payment_method_id', $recurrenceColumns, true)) {
         $pdo->exec('ALTER TABLE recurrences ADD COLUMN payment_method_id INTEGER REFERENCES payment_methods(id) ON DELETE SET NULL');
     }
+    foreach ([
+        'discount_type' => "TEXT NOT NULL DEFAULT 'none'",
+        'discount_value' => 'INTEGER NOT NULL DEFAULT 0',
+        'discount_scope' => "TEXT NOT NULL DEFAULT 'none'",
+        'discount_cycles_remaining' => 'INTEGER NOT NULL DEFAULT 0',
+        'discount_note' => "TEXT NOT NULL DEFAULT ''",
+    ] as $field => $definition) {
+        if (!in_array($field, $recurrenceColumns, true)) $pdo->exec("ALTER TABLE recurrences ADD COLUMN {$field} {$definition}");
+    }
     if (!in_array('payment_method_id', $invoiceColumns, true)) {
         $pdo->exec('ALTER TABLE invoices ADD COLUMN payment_method_id INTEGER REFERENCES payment_methods(id) ON DELETE SET NULL');
     }
     if (!in_array('billing_company_name', $invoiceColumns, true)) {
         $pdo->exec("ALTER TABLE invoices ADD COLUMN billing_company_name TEXT NOT NULL DEFAULT ''");
     }
+    foreach ([
+        'subtotal_cents' => 'INTEGER NOT NULL DEFAULT 0',
+        'invoice_discount_type' => "TEXT NOT NULL DEFAULT 'none'",
+        'invoice_discount_value' => 'INTEGER NOT NULL DEFAULT 0',
+        'invoice_discount_cents' => 'INTEGER NOT NULL DEFAULT 0',
+        'invoice_discount_label' => "TEXT NOT NULL DEFAULT ''",
+    ] as $field => $definition) {
+        if (!in_array($field, $invoiceColumns, true)) $pdo->exec("ALTER TABLE invoices ADD COLUMN {$field} {$definition}");
+    }
+    $pdo->exec('UPDATE invoices SET subtotal_cents = total_cents WHERE subtotal_cents = 0 AND total_cents > 0');
     foreach (['billing_name' => 'name', 'billing_phone' => 'phone', 'billing_email' => 'email'] as $invoiceField => $clientField) {
         if (!in_array($invoiceField, $invoiceColumns, true)) {
             $pdo->exec("ALTER TABLE invoices ADD COLUMN {$invoiceField} TEXT NOT NULL DEFAULT ''");
@@ -331,6 +360,11 @@ function migrate_mysql(PDO $pdo): void
             status VARCHAR(20) NOT NULL DEFAULT 'active',
             notes TEXT NOT NULL,
             payment_method_id BIGINT UNSIGNED NULL,
+            discount_type VARCHAR(20) NOT NULL DEFAULT 'none',
+            discount_value BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            discount_scope VARCHAR(20) NOT NULL DEFAULT 'none',
+            discount_cycles_remaining INT UNSIGNED NOT NULL DEFAULT 0,
+            discount_note VARCHAR(200) NOT NULL DEFAULT '',
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT fk_recurrences_client FOREIGN KEY (client_id) REFERENCES clients(id),
             CONSTRAINT fk_recurrences_payment_method FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL,
@@ -363,6 +397,11 @@ function migrate_mysql(PDO $pdo): void
             issue_date DATE NOT NULL,
             due_date DATE NOT NULL,
             notes TEXT NOT NULL,
+            subtotal_cents BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            invoice_discount_type VARCHAR(20) NOT NULL DEFAULT 'none',
+            invoice_discount_value BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            invoice_discount_cents BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            invoice_discount_label VARCHAR(255) NOT NULL DEFAULT '',
             total_cents BIGINT UNSIGNED NOT NULL,
             payment_method_id BIGINT UNSIGNED NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -426,6 +465,27 @@ function migrate_mysql(PDO $pdo): void
     if (!in_array('address', $clientColumns, true)) {
         $pdo->exec("ALTER TABLE clients ADD COLUMN address VARCHAR(300) NOT NULL DEFAULT '' AFTER company_name");
     }
+    $recurrenceColumns = array_column($pdo->query('SHOW COLUMNS FROM recurrences')->fetchAll(), 'Field');
+    foreach ([
+        'discount_type' => "VARCHAR(20) NOT NULL DEFAULT 'none'",
+        'discount_value' => 'BIGINT UNSIGNED NOT NULL DEFAULT 0',
+        'discount_scope' => "VARCHAR(20) NOT NULL DEFAULT 'none'",
+        'discount_cycles_remaining' => 'INT UNSIGNED NOT NULL DEFAULT 0',
+        'discount_note' => "VARCHAR(200) NOT NULL DEFAULT ''",
+    ] as $field => $definition) {
+        if (!in_array($field, $recurrenceColumns, true)) $pdo->exec("ALTER TABLE recurrences ADD COLUMN {$field} {$definition}");
+    }
+    $invoiceColumns = array_column($pdo->query('SHOW COLUMNS FROM invoices')->fetchAll(), 'Field');
+    foreach ([
+        'subtotal_cents' => 'BIGINT UNSIGNED NOT NULL DEFAULT 0',
+        'invoice_discount_type' => "VARCHAR(20) NOT NULL DEFAULT 'none'",
+        'invoice_discount_value' => 'BIGINT UNSIGNED NOT NULL DEFAULT 0',
+        'invoice_discount_cents' => 'BIGINT UNSIGNED NOT NULL DEFAULT 0',
+        'invoice_discount_label' => "VARCHAR(255) NOT NULL DEFAULT ''",
+    ] as $field => $definition) {
+        if (!in_array($field, $invoiceColumns, true)) $pdo->exec("ALTER TABLE invoices ADD COLUMN {$field} {$definition}");
+    }
+    $pdo->exec('UPDATE invoices SET subtotal_cents = total_cents WHERE subtotal_cents = 0 AND total_cents > 0');
     $paymentColumns = array_column($pdo->query('SHOW COLUMNS FROM payments')->fetchAll(), 'Field');
     if (!in_array('discount_cents', $paymentColumns, true)) $pdo->exec('ALTER TABLE payments ADD COLUMN discount_cents BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER amount_cents');
     if (!in_array('discount_scope', $paymentColumns, true)) $pdo->exec("ALTER TABLE payments ADD COLUMN discount_scope VARCHAR(20) NOT NULL DEFAULT '' AFTER discount_cents");
@@ -778,11 +838,86 @@ function parse_items(array $input, bool $allowInactiveServices = false): array
     return $items;
 }
 
-function insert_invoice(PDO $pdo, int $clientId, array $items, string $issueDate, string $dueDate, string $notes, array $billing, ?int $recurrenceId = null, ?int $paymentMethodId = null): int
+function parse_recurrence_discount(array $input, int $subtotalCents): array
 {
-    $total = array_sum(array_column($items, 'total_cents'));
-    $stmt = $pdo->prepare('INSERT INTO invoices (number, client_id, billing_name, billing_phone, billing_email, billing_company_name, recurrence_id, cycle_date, issue_date, due_date, notes, total_cents, payment_method_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    $stmt->execute(['PENDING-' . bin2hex(random_bytes(8)), $clientId, $billing['name'], $billing['phone'], $billing['email'], $billing['company_name'], $recurrenceId, $recurrenceId ? $issueDate : null, $issueDate, $dueDate, $notes, $total, $paymentMethodId]);
+    if (!isset($input['discount_enabled'])) {
+        return ['type' => 'none', 'value' => 0, 'scope' => 'none', 'cycles_remaining' => 0, 'note' => ''];
+    }
+    $type = (string)($input['discount_type'] ?? '');
+    $scope = (string)($input['discount_scope'] ?? '');
+    if (!in_array($type, ['fixed', 'percent'], true)) throw new InvalidArgumentException('Select a valid recurring discount type.');
+    if (!in_array($scope, ['next_invoice', 'every_cycle', 'limited'], true)) throw new InvalidArgumentException('Select when the recurring discount should apply.');
+    $rawValue = trim((string)($input['discount_value'] ?? ''));
+    if ($rawValue === '' || !is_numeric($rawValue) || (float)$rawValue <= 0) throw new InvalidArgumentException('Enter a recurring discount greater than zero.');
+    if ($type === 'fixed') {
+        $value = money_cents($rawValue);
+        if ($value > $subtotalCents) throw new InvalidArgumentException('The recurring discount cannot exceed the invoice subtotal.');
+    } else {
+        $percent = (float)$rawValue;
+        if ($percent > 100) throw new InvalidArgumentException('The percentage discount cannot exceed 100%.');
+        $value = (int)round($percent * 100);
+    }
+    $cycles = $scope === 'limited' ? (int)($input['discount_cycles'] ?? 0) : 0;
+    if ($scope === 'limited' && ($cycles < 1 || $cycles > 120)) throw new InvalidArgumentException('Limited discounts must apply for 1 to 120 invoices.');
+    return [
+        'type' => $type,
+        'value' => $value,
+        'scope' => $scope,
+        'cycles_remaining' => $cycles,
+        'note' => mb_substr(trim((string)($input['discount_note'] ?? '')), 0, 200),
+    ];
+}
+
+function recurrence_discount_from_row(array $row): array
+{
+    return [
+        'type' => (string)($row['discount_type'] ?? 'none'),
+        'value' => (int)($row['discount_value'] ?? 0),
+        'scope' => (string)($row['discount_scope'] ?? 'none'),
+        'cycles_remaining' => (int)($row['discount_cycles_remaining'] ?? 0),
+        'note' => (string)($row['discount_note'] ?? ''),
+    ];
+}
+
+function calculate_invoice_discount(int $subtotalCents, array $rule): array
+{
+    $type = (string)($rule['type'] ?? 'none');
+    $value = (int)($rule['value'] ?? 0);
+    $scope = (string)($rule['scope'] ?? 'none');
+    $active = in_array($type, ['fixed', 'percent'], true) && in_array($scope, ['next_invoice', 'every_cycle', 'limited'], true) && $value > 0;
+    if ($scope === 'limited' && (int)($rule['cycles_remaining'] ?? 0) < 1) $active = false;
+    if (!$active) return ['type' => 'none', 'value' => 0, 'cents' => 0, 'label' => ''];
+    $cents = $type === 'fixed' ? $value : (int)round($subtotalCents * $value / 10000);
+    $cents = min($subtotalCents, max(0, $cents));
+    $label = trim((string)($rule['note'] ?? ''));
+    if ($label === '') {
+        $label = $type === 'percent'
+            ? rtrim(rtrim(number_format($value / 100, 2, '.', ''), '0'), '.') . '% recurring discount'
+            : 'Recurring discount';
+    }
+    return ['type' => $type, 'value' => $value, 'cents' => $cents, 'label' => $label];
+}
+
+function advance_recurrence_discount(PDO $pdo, int $recurrenceId, array $rule): array
+{
+    if (($rule['scope'] ?? 'none') === 'next_invoice') {
+        $rule = ['type' => 'none', 'value' => 0, 'scope' => 'none', 'cycles_remaining' => 0, 'note' => ''];
+    } elseif (($rule['scope'] ?? 'none') === 'limited') {
+        $rule['cycles_remaining'] = max(0, (int)($rule['cycles_remaining'] ?? 0) - 1);
+        if ($rule['cycles_remaining'] < 1) $rule = ['type' => 'none', 'value' => 0, 'scope' => 'none', 'cycles_remaining' => 0, 'note' => ''];
+    }
+    $pdo->prepare('UPDATE recurrences SET discount_type=?, discount_value=?, discount_scope=?, discount_cycles_remaining=?, discount_note=? WHERE id=?')
+        ->execute([$rule['type'], $rule['value'], $rule['scope'], $rule['cycles_remaining'], $rule['note'], $recurrenceId]);
+    return $rule;
+}
+
+function insert_invoice(PDO $pdo, int $clientId, array $items, string $issueDate, string $dueDate, string $notes, array $billing, ?int $recurrenceId = null, ?int $paymentMethodId = null, array $discountRule = []): int
+{
+    $subtotal = array_sum(array_column($items, 'total_cents'));
+    $discount = calculate_invoice_discount($subtotal, $discountRule);
+    $total = $subtotal - $discount['cents'];
+    $stmt = $pdo->prepare('INSERT INTO invoices (number, client_id, billing_name, billing_phone, billing_email, billing_company_name, recurrence_id, cycle_date, issue_date, due_date, notes, subtotal_cents, invoice_discount_type, invoice_discount_value, invoice_discount_cents, invoice_discount_label, total_cents, payment_method_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt->execute(['PENDING-' . bin2hex(random_bytes(8)), $clientId, $billing['name'], $billing['phone'], $billing['email'], $billing['company_name'], $recurrenceId, $recurrenceId ? $issueDate : null, $issueDate, $dueDate, $notes, $subtotal, $discount['type'], $discount['value'], $discount['cents'], $discount['label'], $total, $paymentMethodId]);
     $id = (int)$pdo->lastInsertId();
     $number = 'INV-' . date('Y', strtotime($issueDate)) . '-' . str_pad((string)$id, 5, '0', STR_PAD_LEFT);
     $pdo->prepare('UPDATE invoices SET number = ? WHERE id = ?')->execute([$number, $id]);
@@ -812,6 +947,8 @@ function create_invoice(array $input): int
     $type = (string)($input['invoice_type'] ?? 'one_time');
     if (!in_array($type, ['one_time', 'recurring'], true)) throw new InvalidArgumentException('Select an invoice type.');
     $items = parse_items($input);
+    $subtotal = array_sum(array_column($items, 'total_cents'));
+    $discountRule = $type === 'recurring' ? parse_recurrence_discount($input, $subtotal) : [];
     $notes = mb_substr(trim((string)($input['notes'] ?? '')), 0, 2000);
     $paymentMethodId = selected_payment_method_id($input);
     $companyName = trim((string)($input['company_name'] ?? ''));
@@ -828,15 +965,16 @@ function create_invoice(array $input): int
             if (!array_key_exists($frequency, billing_frequency_options())) throw new InvalidArgumentException('Select a valid recurring frequency.');
             $dueDays = (new DateTimeImmutable($issueDate))->diff(new DateTimeImmutable($dueDate))->days;
             $nextDate = next_cycle_date($issueDate, $frequency, (int)date('j', strtotime($issueDate)), (int)date('n', strtotime($issueDate)));
-            $stmt = $pdo->prepare('INSERT INTO recurrences (client_id, frequency, next_issue_date, due_days, anchor_day, anchor_month, notes, payment_method_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-            $stmt->execute([$clientId, $frequency, $nextDate, $dueDays, (int)date('j', strtotime($issueDate)), (int)date('n', strtotime($issueDate)), $notes, $paymentMethodId]);
+            $stmt = $pdo->prepare('INSERT INTO recurrences (client_id, frequency, next_issue_date, due_days, anchor_day, anchor_month, notes, payment_method_id, discount_type, discount_value, discount_scope, discount_cycles_remaining, discount_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([$clientId, $frequency, $nextDate, $dueDays, (int)date('j', strtotime($issueDate)), (int)date('n', strtotime($issueDate)), $notes, $paymentMethodId, $discountRule['type'], $discountRule['value'], $discountRule['scope'], $discountRule['cycles_remaining'], $discountRule['note']]);
             $recurrenceId = (int)$pdo->lastInsertId();
             $itemStmt = $pdo->prepare('INSERT INTO recurrence_items (recurrence_id, service_id, name, description, quantity, unit_price_cents) VALUES (?, ?, ?, ?, ?, ?)');
             foreach ($items as $item) {
                 $itemStmt->execute([$recurrenceId, $item['service_id'], $item['name'], $item['description'], $item['quantity'], $item['unit_price_cents']]);
             }
         }
-        $id = insert_invoice($pdo, $clientId, $items, $issueDate, $dueDate, $notes, $billing, $recurrenceId, $paymentMethodId);
+        $id = insert_invoice($pdo, $clientId, $items, $issueDate, $dueDate, $notes, $billing, $recurrenceId, $paymentMethodId, $discountRule);
+        if ($recurrenceId !== null && ($discountRule['type'] ?? 'none') !== 'none') advance_recurrence_discount($pdo, $recurrenceId, $discountRule);
         queue_invoice_email($pdo, $id, (string)$billing['email']);
         $pdo->commit();
         return $id;
@@ -860,18 +998,25 @@ function edit_invoice(int $invoiceId, array $input): void
     if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new InvalidArgumentException('Enter a valid email address.');
     if (mb_strlen($companyName) > 150) throw new InvalidArgumentException('Enter a company name of up to 150 characters.');
     $items = parse_items($input, true);
-    $total = array_sum(array_column($items, 'total_cents'));
+    $subtotal = array_sum(array_column($items, 'total_cents'));
     $notes = mb_substr(trim((string)($input['notes'] ?? '')), 0, 2000);
     $pdo = db();
     $pdo->beginTransaction();
     try {
-        $invoice = query_one('SELECT i.id, i.total_cents, i.payment_method_id, COALESCE(SUM(p.amount_cents + p.discount_cents), 0) AS paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? GROUP BY i.id', [$invoiceId]);
+        $invoice = query_one('SELECT i.id, i.total_cents, i.payment_method_id, i.invoice_discount_type, i.invoice_discount_value, i.invoice_discount_label, COALESCE(SUM(p.amount_cents + p.discount_cents), 0) AS paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? GROUP BY i.id', [$invoiceId]);
         if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
+        $discount = calculate_invoice_discount($subtotal, [
+            'type' => $invoice['invoice_discount_type'],
+            'value' => (int)$invoice['invoice_discount_value'],
+            'scope' => $invoice['invoice_discount_type'] === 'none' ? 'none' : 'every_cycle',
+            'note' => $invoice['invoice_discount_label'],
+        ]);
+        $total = $subtotal - $discount['cents'];
         if ($total < (int)$invoice['paid_cents']) throw new InvalidArgumentException('The new invoice total cannot be less than the amount already collected.');
         $clientId = get_or_create_client($pdo, $name, $phone, $email, $companyName);
         $paymentMethodId = selected_payment_method_id($input, (int)$invoice['payment_method_id']);
-        $stmt = $pdo->prepare('UPDATE invoices SET client_id=?, billing_name=?, billing_phone=?, billing_email=?, billing_company_name=?, issue_date=?, due_date=?, notes=?, total_cents=?, payment_method_id=? WHERE id=?');
-        $stmt->execute([$clientId, $name, $phone, $email, $companyName, $issueDate, $dueDate, $notes, $total, $paymentMethodId, $invoiceId]);
+        $stmt = $pdo->prepare('UPDATE invoices SET client_id=?, billing_name=?, billing_phone=?, billing_email=?, billing_company_name=?, issue_date=?, due_date=?, notes=?, subtotal_cents=?, invoice_discount_cents=?, total_cents=?, payment_method_id=? WHERE id=?');
+        $stmt->execute([$clientId, $name, $phone, $email, $companyName, $issueDate, $dueDate, $notes, $subtotal, $discount['cents'], $total, $paymentMethodId, $invoiceId]);
         $pdo->prepare('DELETE FROM invoice_items WHERE invoice_id=?')->execute([$invoiceId]);
         $itemStmt = $pdo->prepare('INSERT INTO invoice_items (invoice_id, service_id, name, description, quantity, unit_price_cents, total_cents) VALUES (?, ?, ?, ?, ?, ?, ?)');
         foreach ($items as $item) {
@@ -914,6 +1059,17 @@ function update_recurrence_frequency(int $recurrenceId, string $frequency): void
     $base = max(date('Y-m-d'), (string)$schedule['next_issue_date']);
     $next = next_cycle_date($base, $frequency, (int)$schedule['anchor_day'], (int)$schedule['anchor_month']);
     db()->prepare('UPDATE recurrences SET frequency=?, next_issue_date=? WHERE id=?')->execute([$frequency, $next, $recurrenceId]);
+}
+
+function update_recurrence_discount(int $recurrenceId, array $input): void
+{
+    $schedule = query_one('SELECT id FROM recurrences WHERE id=?', [$recurrenceId]);
+    if (!$schedule) throw new InvalidArgumentException('Recurring schedule not found.');
+    $items = query_all('SELECT quantity, unit_price_cents FROM recurrence_items WHERE recurrence_id=?', [$recurrenceId]);
+    $subtotal = array_sum(array_map(static fn(array $item): int => (int)round((float)$item['quantity'] * (int)$item['unit_price_cents']), $items));
+    $rule = parse_recurrence_discount($input, $subtotal);
+    db()->prepare('UPDATE recurrences SET discount_type=?, discount_value=?, discount_scope=?, discount_cycles_remaining=?, discount_note=? WHERE id=?')
+        ->execute([$rule['type'], $rule['value'], $rule['scope'], $rule['cycles_remaining'], $rule['note'], $recurrenceId]);
 }
 
 function collect_multiple_invoices(array $invoiceIds, string $amount, string $discount, string $discountScope, string $method, string $reference, string $notes, string $paidAt): string
@@ -975,6 +1131,7 @@ function generate_due_invoices(): int
         $pdo->beginTransaction();
         try {
             $next = $recurrence['next_issue_date'];
+            $discountRule = recurrence_discount_from_row($recurrence);
             $items = query_all('SELECT * FROM recurrence_items WHERE recurrence_id = ? ORDER BY id', [(int)$recurrence['id']]);
             for ($n = 0; $next <= $today && $n < 120; $n++) {
                 $invoiceItems = array_map(static function ($item) {
@@ -982,7 +1139,8 @@ function generate_due_invoices(): int
                     return $item;
                 }, $items);
                 $billing = ['name' => $recurrence['billing_name'], 'phone' => $recurrence['billing_phone'], 'email' => $recurrence['billing_email'] ?? '', 'company_name' => $recurrence['billing_company_name']];
-                $invoiceId = insert_invoice($pdo, (int)$recurrence['client_id'], $invoiceItems, $next, add_days($next, (int)$recurrence['due_days']), $recurrence['notes'], $billing, (int)$recurrence['id'], $recurrence['payment_method_id'] !== null ? (int)$recurrence['payment_method_id'] : null);
+                $invoiceId = insert_invoice($pdo, (int)$recurrence['client_id'], $invoiceItems, $next, add_days($next, (int)$recurrence['due_days']), $recurrence['notes'], $billing, (int)$recurrence['id'], $recurrence['payment_method_id'] !== null ? (int)$recurrence['payment_method_id'] : null, $discountRule);
+                if (($discountRule['type'] ?? 'none') !== 'none') $discountRule = advance_recurrence_discount($pdo, (int)$recurrence['id'], $discountRule);
                  queue_invoice_email($pdo, $invoiceId, (string)($billing['email'] ?? ''), true);
                 $generated++;
                 $next = next_cycle_date($next, $recurrence['frequency'], (int)$recurrence['anchor_day'], (int)$recurrence['anchor_month']);

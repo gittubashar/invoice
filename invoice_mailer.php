@@ -31,7 +31,14 @@ function invoice_email_configuration(): array
 function send_invoice_email_for_invoice(int $invoiceId): array
 {
     $delivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$invoiceId]);
-    if (!$delivery) return ['status' => 'skipped', 'message' => 'A valid client email address was not provided.'];
+    if (!$delivery) {
+        $invoice = query_one('SELECT billing_email FROM invoices WHERE id=?', [$invoiceId]);
+        $recipient = trim((string)($invoice['billing_email'] ?? ''));
+        if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) return ['status' => 'skipped', 'message' => 'A valid client email address was not provided.'];
+        queue_invoice_email(db(), $invoiceId, $recipient);
+        $delivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$invoiceId]);
+    }
+    if (!$delivery) return ['status' => 'skipped', 'message' => 'The invoice email could not be queued.'];
     return deliver_invoice_email($delivery, true);
 }
 

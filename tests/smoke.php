@@ -86,6 +86,29 @@ try {
     $recurrenceId = (int)query_one('SELECT recurrence_id FROM invoices WHERE id=?', [$second])['recurrence_id'];
     update_recurrence_frequency($recurrenceId, 'half_yearly');
     expect(query_one('SELECT frequency FROM recurrences WHERE id=?', [$recurrenceId])['frequency'] === 'half_yearly', 'Billing cycle must be editable');
+    $discountedInvoice = create_invoice(array_replace($base, [
+        'invoice_type' => 'recurring', 'frequency' => 'monthly', 'issue_date' => date('Y-m-d'), 'due_date' => add_days(date('Y-m-d'), 7),
+        'item_service_id' => [''], 'item_name' => ['Discounted subscription'], 'item_description' => [''], 'item_qty' => ['1'], 'item_price' => ['1000'],
+        'discount_enabled' => '1', 'discount_type' => 'percent', 'discount_value' => '10', 'discount_scope' => 'limited', 'discount_cycles' => '2', 'discount_note' => 'Loyalty offer',
+    ]));
+    $discountedRow = query_one('SELECT recurrence_id, subtotal_cents, invoice_discount_type, invoice_discount_value, invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE id=?', [$discountedInvoice]);
+    expect((int)$discountedRow['subtotal_cents'] === 100000 && (int)$discountedRow['invoice_discount_cents'] === 10000 && (int)$discountedRow['total_cents'] === 90000, 'Percentage recurring discount must reduce the generated invoice total');
+    expect($discountedRow['invoice_discount_type'] === 'percent' && (int)$discountedRow['invoice_discount_value'] === 1000 && $discountedRow['invoice_discount_label'] === 'Loyalty offer', 'Invoice must snapshot the recurring discount rule and label');
+    $discountedRecurrenceId = (int)$discountedRow['recurrence_id'];
+    expect((int)query_one('SELECT discount_cycles_remaining FROM recurrences WHERE id=?', [$discountedRecurrenceId])['discount_cycles_remaining'] === 1, 'Limited discount must consume the initial invoice cycle');
+    $pdo->prepare('UPDATE recurrences SET next_issue_date=? WHERE id=?')->execute([add_days(date('Y-m-d'), -1), $discountedRecurrenceId]);
+    expect(generate_due_invoices() === 1, 'Discounted recurring schedule must generate its next due invoice');
+    $discountedGenerated = query_one('SELECT invoice_discount_cents, total_cents FROM invoices WHERE recurrence_id=? ORDER BY id DESC LIMIT 1', [$discountedRecurrenceId]);
+    expect((int)$discountedGenerated['invoice_discount_cents'] === 10000 && (int)$discountedGenerated['total_cents'] === 90000, 'Limited recurring discount must apply to the configured number of invoices');
+    expect(query_one('SELECT discount_type, discount_scope, discount_cycles_remaining FROM recurrences WHERE id=?', [$discountedRecurrenceId])['discount_type'] === 'none', 'Limited recurring discount must turn off after its final cycle');
+    update_recurrence_discount($discountedRecurrenceId, ['discount_enabled'=>'1', 'discount_type'=>'fixed', 'discount_value'=>'50', 'discount_scope'=>'every_cycle', 'discount_note'=>'Retention credit']);
+    $updatedDiscount = query_one('SELECT discount_type, discount_value, discount_scope, discount_note FROM recurrences WHERE id=?', [$discountedRecurrenceId]);
+    expect($updatedDiscount['discount_type'] === 'fixed' && (int)$updatedDiscount['discount_value'] === 5000 && $updatedDiscount['discount_scope'] === 'every_cycle', 'Existing recurring discount must be editable');
+    $pdo->prepare('UPDATE recurrences SET next_issue_date=? WHERE id=?')->execute([add_days(date('Y-m-d'), -2), $discountedRecurrenceId]);
+    expect(generate_due_invoices() === 1, 'Edited every-cycle discount schedule must generate');
+    $fixedDiscountInvoice = query_one('SELECT invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE recurrence_id=? ORDER BY id DESC LIMIT 1', [$discountedRecurrenceId]);
+    expect((int)$fixedDiscountInvoice['invoice_discount_cents'] === 5000 && (int)$fixedDiscountInvoice['total_cents'] === 95000 && $fixedDiscountInvoice['invoice_discount_label'] === 'Retention credit', 'Edited fixed discount must apply to every future cycle');
+    expect(query_one('SELECT discount_type FROM recurrences WHERE id=?', [$discountedRecurrenceId])['discount_type'] === 'fixed', 'Every-cycle discount must remain active after generation');
     expect((int)query_one('SELECT auto_send FROM email_deliveries WHERE invoice_id=?', [$first])['auto_send'] === 0, 'Manual invoices must wait for Send Mail');
     expect((int)query_one('SELECT COUNT(*) total FROM email_deliveries WHERE auto_send=1')['total'] >= $generated, 'Generated recurring invoices must be marked for automatic email');
     $originalNumber = query_one('SELECT number FROM invoices WHERE id=?', [$first])['number'];

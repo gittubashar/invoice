@@ -225,6 +225,19 @@
     });
   }
 
+  document.querySelectorAll('.recurring-discount-form').forEach(discountForm => {
+    const enabled = discountForm.elements.discount_enabled;
+    const scope = discountForm.elements.discount_scope;
+    const cycleControl = discountForm.querySelector('.discount-cycle-control');
+    const refreshScheduleDiscount = () => {
+      discountForm.classList.toggle('discount-disabled', !enabled.checked);
+      if (cycleControl) cycleControl.hidden = scope.value !== 'limited';
+    };
+    enabled.addEventListener('change', refreshScheduleDiscount);
+    scope.addEventListener('change', refreshScheduleDiscount);
+    refreshScheduleDiscount();
+  });
+
   const form = document.getElementById('invoice-form');
   if (!form) return;
 
@@ -322,6 +335,10 @@
   const itemContainer = document.getElementById('invoice-items');
   const template = document.getElementById('item-template');
   const currency = new Intl.NumberFormat('en-BD', { maximumFractionDigits: 2 });
+  const discountEnabled = form.querySelector('[data-discount-enabled]');
+  const discountFields = form.querySelector('[data-discount-fields]');
+  const discountScope = form.querySelector('[data-discount-scope]');
+  const discountCycles = form.querySelector('[data-discount-cycles]');
 
   const refresh = () => {
     const items = [...itemContainer.querySelectorAll('.line-item')];
@@ -332,10 +349,21 @@
         (parseFloat(item.querySelector('.item-price').value) || 0);
     });
     document.getElementById('summary-count').textContent = items.length;
-    document.getElementById('summary-total').textContent = `BDT ${currency.format(total)}`;
+    const recurring = form.elements.invoice_type.value === 'recurring';
+    const discountActive = recurring && Boolean(discountEnabled?.checked);
+    const rawDiscount = parseFloat(form.elements.discount_value?.value) || 0;
+    const discount = discountActive
+      ? Math.min(total, form.elements.discount_type?.value === 'percent' ? total * Math.min(rawDiscount, 100) / 100 : rawDiscount)
+      : 0;
+    document.getElementById('summary-subtotal').textContent = `BDT ${currency.format(total)}`;
+    document.getElementById('summary-discount').textContent = `BDT ${currency.format(discount)}`;
+    document.getElementById('summary-discount-row').hidden = !discountActive;
+    document.getElementById('summary-total').textContent = `BDT ${currency.format(Math.max(0, total - discount))}`;
     document.querySelectorAll('.recurring-field').forEach(el => {
-      el.hidden = form.elements.invoice_type.value !== 'recurring';
+      el.hidden = !recurring;
     });
+    if (discountFields) discountFields.hidden = !discountActive;
+    if (discountCycles) discountCycles.hidden = !discountActive || discountScope?.value !== 'limited';
   };
 
   document.getElementById('add-item')?.addEventListener('click', () => {
@@ -365,5 +393,8 @@
   });
   itemContainer.addEventListener('input', refresh);
   form.querySelectorAll('input[name="invoice_type"]').forEach(input => input.addEventListener('change', refresh));
+  discountEnabled?.addEventListener('change', refresh);
+  discountFields?.addEventListener('input', refresh);
+  discountFields?.addEventListener('change', refresh);
   refresh();
 })();

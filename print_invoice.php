@@ -11,8 +11,14 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
     $mobile = setting('mobile_number');
     $email = setting('email');
     $website = setting('website');
-    $discount = (int)($invoice['discount_cents'] ?? 0);
-    $collected = max(0, (int)$invoice['paid_cents'] - $discount);
+    $showLogo = setting('pdf_show_logo', '1') === '1';
+    $showTitle = setting('pdf_show_title', '1') === '1';
+    $showSlogan = setting('pdf_show_slogan', '1') === '1';
+    $hasCompanyHeading = ($showLogo && $logo !== '') || $showTitle || ($showSlogan && $slogan !== '');
+    $collectionDiscount = (int)($invoice['discount_cents'] ?? 0);
+    $invoiceDiscount = (int)($invoice['invoice_discount_cents'] ?? 0);
+    $subtotal = (int)($invoice['subtotal_cents'] ?? 0) ?: (int)$invoice['total_cents'];
+    $collected = max(0, (int)$invoice['paid_cents'] - $collectionDiscount);
     $due = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
     $status = invoice_status($invoice);
     ?>
@@ -32,11 +38,11 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
 </div>
 <main class="invoice-sheet">
     <header class="sheet-header">
-        <div class="company-block<?= $logo !== '' ? ' has-logo' : '' ?>">
-            <div class="company-heading">
-                <?php if ($logo !== ''): ?><img class="company-logo" src="<?= e($logo) ?>" alt="<?= e($siteTitle) ?> logo"><?php endif; ?>
-                <div><h1><?= e($siteTitle) ?></h1><?php if ($slogan !== ''): ?><p><?= e($slogan) ?></p><?php endif; ?></div>
-            </div>
+        <div class="company-block<?= $showLogo && $logo !== '' ? ' has-logo' : '' ?>">
+            <?php if ($hasCompanyHeading): ?><div class="company-heading">
+                <?php if ($showLogo && $logo !== ''): ?><img class="company-logo" src="<?= e($logo) ?>" alt="<?= e($siteTitle) ?> logo"><?php endif; ?>
+                <?php if ($showTitle || ($showSlogan && $slogan !== '')): ?><div><?php if ($showTitle): ?><h1><?= e($siteTitle) ?></h1><?php endif; ?><?php if ($showSlogan && $slogan !== ''): ?><p><?= e($slogan) ?></p><?php endif; ?></div><?php endif; ?>
+            </div><?php endif; ?>
             <div class="company-contact">
                 <?php if ($address !== ''): ?><p><span>⌖</span><?= nl2br(e($address)) ?></p><?php endif; ?>
                 <?php if ($mobile !== ''): ?><p><span>☎</span><?= e($mobile) ?></p><?php endif; ?>
@@ -81,9 +87,11 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
     <div class="totals-area">
         <div class="thanks-message">Your trust is<br>our inspiration.<span></span></div>
         <div class="totals-card">
-            <div><span>Subtotal</span><strong><?= e(format_money((int)$invoice['total_cents'])) ?></strong></div>
+            <div><span>Subtotal</span><strong><?= e(format_money($subtotal)) ?></strong></div>
+            <?php if ($invoiceDiscount > 0): ?><div><span><?= e($invoice['invoice_discount_label'] ?: 'Invoice Discount') ?></span><strong>− <?= e(format_money($invoiceDiscount)) ?></strong></div><?php endif; ?>
+            <div><span>Grand Total</span><strong><?= e(format_money((int)$invoice['total_cents'])) ?></strong></div>
             <div><span>Paid</span><strong><?= e(format_money($collected)) ?></strong></div>
-            <?php if ($discount > 0): ?><div><span>Discount</span><strong><?= e(format_money($discount)) ?></strong></div><?php endif; ?>
+            <?php if ($collectionDiscount > 0): ?><div><span>Collection Discount</span><strong><?= e(format_money($collectionDiscount)) ?></strong></div><?php endif; ?>
             <div class="total-due"><span>Balance Due</span><strong><?= e(format_money($due)) ?></strong></div>
         </div>
     </div>
