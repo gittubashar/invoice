@@ -664,6 +664,7 @@ case 'download':
     if (!$invoice) { http_response_code(404); begin_page('Invoice not found', 'invoices'); echo '<div class="empty-state"><h2>Invoice not found</h2><a href="' . e(url('invoices')) . '">Go Back</a></div>'; end_page(); break; }
     $items = query_all('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id', [$id]);
     $payments = query_all('SELECT * FROM payments WHERE invoice_id=? ORDER BY paid_at DESC, id DESC', [$id]);
+    $collectionHistory = array_reverse($payments);
     $paymentMethods = invoice_payment_methods($invoice);
     if (in_array($page, ['pdf', 'download'], true)) {
         require_once __DIR__ . '/pdf_invoice.php';
@@ -671,7 +672,7 @@ case 'download':
         $bufferLevel = ob_get_level();
         ob_start();
         try {
-            $pdf = render_invoice_pdf($invoice, $items, $paymentMethods);
+            $pdf = render_invoice_pdf($invoice, $items, $paymentMethods, $collectionHistory);
         } finally {
             while (ob_get_level() > $bufferLevel) ob_end_clean();
         }
@@ -685,7 +686,7 @@ case 'download':
         exit;
     }
     if ($page === 'print') {
-        render_invoice_print($invoice, $items, $paymentMethods);
+        render_invoice_print($invoice, $items, $paymentMethods, $collectionHistory);
         break;
     }
     $remaining = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
@@ -714,6 +715,11 @@ case 'download':
     echo '<div><span>Grand Total</span><strong>' . format_money((int)$invoice['total_cents']) . '</strong></div><div><span>Collection</span><strong>' . format_money(max(0,(int)$invoice['paid_cents']-(int)$invoice['discount_cents'])) . '</strong></div>';
     if ((int)$invoice['discount_cents'] > 0) echo '<div><span>Collection Discount</span><strong>' . format_money((int)$invoice['discount_cents']) . '</strong></div>';
     echo '<div class="balance"><span>Balance Due</span><strong>' . format_money($remaining) . '</strong></div></div>';
+    if ($collectionHistory) {
+        echo '<div class="paper-collection-history"><strong>Collection History</strong><div class="paper-collection-list">';
+        foreach ($collectionHistory as $collection) echo '<div><span>' . e(format_date($collection['paid_at'])) . '</span><strong>' . format_money((int)$collection['amount_cents']) . '</strong></div>';
+        echo '</div></div>';
+    }
     foreach ($paymentMethods as $paymentMethod) {
         $methodQr = uploaded_asset_url($paymentMethod['qr_path']);
         echo '<div class="paper-payment"><div><strong>Payment Method: ' . e($paymentMethod['name']) . '</strong><p>' . e(['bank' => 'Bank', 'mfs' => 'Mobile Banking', 'card' => 'Card', 'other' => 'Other'][$paymentMethod['type']] ?? 'Other') . '</p>';
@@ -749,6 +755,32 @@ case 'receipt':
     echo '</tbody></table></div><div class="paper-totals"><div><span>Total Collected</span><strong>' . format_money($receiptCash) . '</strong></div><div><span>Total Discount</span><strong>' . format_money($receiptDiscount) . '</strong></div><div class="balance"><span>Total Settled</span><strong>' . format_money($receiptCash+$receiptDiscount) . '</strong></div></div></section>';
     end_page(); break;
 
+case 'client-ledger-pdf':
+    $ledgerClientId = (int)($_GET['id'] ?? 0);
+    try {
+        $statement = client_ledger_statement($ledgerClientId);
+    } catch (InvalidArgumentException) {
+        http_response_code(404);
+        exit('Client not found.');
+    }
+    require_once __DIR__ . '/client_ledger_pdf.php';
+    session_write_close();
+    $bufferLevel = ob_get_level();
+    ob_start();
+    try {
+        $pdf = render_client_ledger_pdf($statement);
+    } finally {
+        while (ob_get_level() > $bufferLevel) ob_end_clean();
+    }
+    $filename = 'statement-' . preg_replace('/[^A-Za-z0-9_-]/', '-', strtolower((string)$statement['client']['name'])) . '.pdf';
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: inline; filename="' . $filename . '"');
+    header('Content-Length: ' . strlen($pdf));
+    header('Cache-Control: private, no-store');
+    header('X-Content-Type-Options: nosniff');
+    echo $pdf;
+    exit;
+
 case 'client-ledger':
     $ledgerSearch = trim((string)($_GET['q'] ?? ''));
     $ledgerClientId = (int)($_GET['id'] ?? 0);
@@ -759,9 +791,16 @@ case 'client-ledger':
         $ledgerClient = query_one('SELECT * FROM clients WHERE id=?', [$ledgerClientId]);
         if (!$ledgerClient) { echo '<div class="empty-state"><p>Client not found.</p></div>'; }
         else {
-            $ledgerInvoices = invoice_rows('WHERE i.client_id=?', [$ledgerClientId], 'i.issue_date ASC, i.id ASC', 1000);
-            $billed = array_sum(array_column($ledgerInvoices,'total_cents')); $settled = array_sum(array_column($ledgerInvoices,'paid_cents')); $discounts = array_sum(array_column($ledgerInvoices,'discount_cents'));
-            echo '<div class="panel-heading"><div><span class="eyebrow">LEDGER HISTORY</span><h2>' . e($ledgerClient['name']) . '</h2><p>' . e($ledgerClient['phone']) . ' · ' . e($ledgerClient['email'] ?: 'No email') . '</p></div><a class="btn btn-primary btn-sm" href="' . e(url('new',['client_id'=>$ledgerClientId])) . '">Create Invoice</a></div><div class="ledger-summary"><div><span>Total Billed</span><strong>' . format_money($billed) . '</strong></div><div><span>Collections</span><strong>' . format_money(max(0,$settled-$discounts)) . '</strong></div><div><span>Discounts</span><strong>' . format_money($discounts) . '</strong></div><div><span>Balance</span><strong>' . format_money(max(0,$billed-$settled)) . '</strong></div></div>'; invoice_table($ledgerInvoices);
+            $statement = client_ledger_statement($ledgerClientId);
+            echo '<div class="panel-heading"><div><span class="eyebrow">LEDGER HISTORY</span><h2>' . e($ledgerClient['name']) . '</h2><p>' . e($ledgerClient['phone']) . ' · ' . e($ledgerClient['email'] ?: 'No email') . '</p></div><div class="ledger-actions"><a class="btn btn-outline btn-sm" target="_blank" rel="noopener noreferrer" href="' . e(url('client-ledger-pdf',['id'=>$ledgerClientId])) . '">' . icon('print',16) . ' PDF Statement</a><a class="btn btn-primary btn-sm" href="' . e(url('new',['client_id'=>$ledgerClientId])) . '">Create Invoice</a></div></div>';
+            echo '<div class="ledger-summary"><div><span>Total Invoiced</span><strong>' . format_money((int)$statement['total_debit_cents']) . '</strong></div><div><span>Cash Collected</span><strong>' . format_money((int)$statement['total_cash_cents']) . '</strong></div><div><span>Discounts</span><strong>' . format_money((int)$statement['total_discount_cents']) . '</strong></div><div><span>Balance Due</span><strong>' . format_money((int)$statement['balance_cents']) . '</strong></div></div>';
+            echo '<div class="ledger-explanation"><strong>Debit</strong> is the invoice amount charged. <strong>Credit</strong> is the amount settled through collection and collection discount.</div><div class="table-wrap"><table class="statement-table"><thead><tr><th>S.N.</th><th>Date</th><th>Invoice No.</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>';
+            if (!$statement['entries']) echo '<tr><td colspan="6"><div class="empty-state"><p>No ledger entries found.</p></div></td></tr>';
+            foreach ($statement['entries'] as $entry) {
+                $creditNote = $entry['kind'] === 'collection' ? 'Collection received' . ($entry['discount_cents'] > 0 ? ' · Includes ' . format_money((int)$entry['discount_cents']) . ' discount' : '') : 'Invoice issued';
+                echo '<tr><td>' . (int)$entry['serial'] . '</td><td>' . e(format_date($entry['date'])) . '</td><td><a class="strong-link" href="' . e(url('invoice',['id'=>(int)$entry['invoice_id']])) . '">' . e($entry['invoice_number']) . '</a><small>' . e($creditNote) . '</small></td><td class="money-cell">' . ($entry['debit_cents'] > 0 ? format_money((int)$entry['debit_cents']) : '—') . '</td><td class="money-cell">' . ($entry['credit_cents'] > 0 ? format_money((int)$entry['credit_cents']) : '—') . '</td><td class="money-cell"><strong>' . format_money((int)$entry['balance_cents']) . '</strong></td></tr>';
+            }
+            echo '</tbody><tfoot><tr><td colspan="3"><strong>Total</strong></td><td class="money-cell"><strong>' . format_money((int)$statement['total_debit_cents']) . '</strong></td><td class="money-cell"><strong>' . format_money((int)$statement['total_credit_cents']) . '</strong></td><td class="money-cell"><strong>' . format_money((int)$statement['balance_cents']) . '</strong></td></tr><tr class="closing-balance"><td colspan="5"><strong>Closing Balance</strong></td><td class="money-cell"><strong>' . format_money((int)$statement['balance_cents']) . '</strong></td></tr></tfoot></table></div>';
         }
     } else {
         echo '<div class="panel-heading"><div><span class="eyebrow">RECENT COLLECTION CLIENTS</span><h2>Recently Collected Clients</h2></div></div><div class="table-wrap"><table><thead><tr><th>Client</th><th>Mobile</th><th>Email</th><th>Last Collection</th><th></th></tr></thead><tbody>';
@@ -818,7 +857,7 @@ case 'clients':
     if ($showAddClient) echo '<section class="panel form-panel client-create-panel"><div class="client-create-heading"><div><span class="eyebrow">NEW CLIENT</span><h2>Add New Client</h2><p>This client can be linked to invoices later.</p></div><a class="btn btn-outline btn-sm" href="' . e(url('clients')) . '">Close</a></div><form method="post">' . csrf_field() . '<input type="hidden" name="action" value="save_client"><div class="form-grid"><label>Mobile Number <span>*</span><input name="client_phone" inputmode="tel" required value="' . e($oldClient['client_phone'] ?? '') . '" placeholder="01XXXXXXXXX"></label><label>Email <small>(Optional)</small><input type="email" name="client_email" maxlength="190" value="' . e($oldClient['client_email'] ?? '') . '" placeholder="client@example.com"></label><label>Client Name <span>*</span><input name="client_name" maxlength="150" required value="' . e($oldClient['client_name'] ?? '') . '" placeholder="Full name"></label><label>Company Name <small>(Optional)</small><input name="company_name" maxlength="150" value="' . e($oldClient['company_name'] ?? '') . '" placeholder="Company Name"></label><label class="field-wide">Address <small>(Optional)</small><textarea name="client_address" rows="2" maxlength="300" placeholder="Client address">' . e($oldClient['client_address'] ?? '') . '</textarea></label></div><div class="client-create-actions"><button class="btn btn-primary" type="submit">' . icon('plus', 17) . ' Add Client</button></div></form></section>';
     echo '<section class="panel"><div class="toolbar"><form method="get" class="search-form"><input type="hidden" name="page" value="clients">' . icon('search', 18) . '<input name="q" value="' . e($search) . '" placeholder="Name, Company, Mobile or Email Search"><button type="submit">Search</button></form><div class="client-toolbar-actions"><span class="count-pill">' . count($clients) . '  clients</span><a class="btn btn-primary btn-sm" href="' . e(url('clients', ['add' => 1])) . '">' . icon('plus', 16) . ' New Client</a></div></div>';
     if (!$clients) echo '<div class="empty-state">' . icon('users', 34) . '<h3>No clients found</h3><p>A client account will be created automatically when an invoice is created.</p></div>';
-    else { echo '<div class="table-wrap"><table><thead><tr><th>Client</th><th>Company Name</th><th>Mobile</th><th>Email</th><th>Invoice</th><th>Total Billed</th><th></th></tr></thead><tbody>'; foreach ($clients as $client) echo '<tr><td><a class="strong-link" href="' . e(url('client', ['id' => $client['id']])) . '">' . e($client['name']) . '</a><small>Account #' . (int)$client['id'] . '</small></td><td>' . e($client['company_name'] ?: '—') . '</td><td>' . e($client['phone']) . '</td><td>' . e($client['email'] ?: '—') . '</td><td>' . (int)$client['invoice_count'] . '</td><td><strong>' . format_money((int)$client['billed']) . '</strong></td><td><div class="row-actions"><a class="row-edit" href="' . e(url('client', ['id' => $client['id'], 'edit' => 1])) . '">Edit</a><a class="row-arrow" href="' . e(url('client', ['id' => $client['id']])) . '" aria-label="View Client">' . icon('chevron', 18) . '</a></div></td></tr>'; echo '</tbody></table></div>'; }
+    else { echo '<div class="table-wrap"><table><thead><tr><th>Client</th><th>Company Name</th><th>Mobile</th><th>Email</th><th>Invoice</th><th>Total Billed</th><th></th></tr></thead><tbody>'; foreach ($clients as $client) echo '<tr><td><a class="strong-link" href="' . e(url('client', ['id' => $client['id']])) . '">' . e($client['name']) . '</a><small>Account #' . (int)$client['id'] . '</small></td><td>' . e($client['company_name'] ?: '—') . '</td><td>' . e($client['phone']) . '</td><td>' . e($client['email'] ?: '—') . '</td><td>' . (int)$client['invoice_count'] . '</td><td><strong>' . format_money((int)$client['billed']) . '</strong></td><td><div class="row-actions"><a class="row-edit" href="' . e(url('client', ['id' => $client['id'], 'edit' => 1])) . '">Edit</a><a class="row-view" href="' . e(url('client-ledger', ['id' => $client['id']])) . '">Ledger</a><a class="row-arrow" href="' . e(url('client', ['id' => $client['id']])) . '" aria-label="View Client">' . icon('chevron', 18) . '</a></div></td></tr>'; echo '</tbody></table></div>'; }
     echo '</section>'; end_page(); break;
 
 case 'client':

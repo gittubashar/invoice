@@ -11,6 +11,7 @@ require dirname(__DIR__) . '/db.php';
 require dirname(__DIR__) . '/media.php';
 require dirname(__DIR__) . '/print_invoice.php';
 require dirname(__DIR__) . '/pdf_invoice.php';
+require dirname(__DIR__) . '/client_ledger_pdf.php';
 
 function e(mixed $value): string { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function url(string $page, array $params = []): string { return 'index.php?' . http_build_query(['page' => $page] + $params); }
@@ -151,6 +152,18 @@ try {
     expect(invoice_status(invoice_rows('WHERE i.id=?', [$allocationOne])[0]) === 'paid', 'First selected invoice must become fully paid');
     $allocationSecondRow = invoice_rows('WHERE i.id=?', [$allocationTwo])[0];
     expect(invoice_status($allocationSecondRow) === 'partial' && (int)$allocationSecondRow['paid_cents'] === 6000, 'Remaining collection and discount must continue into the second invoice');
+    $allocationClientId = (int)query_one('SELECT client_id FROM invoices WHERE id=?', [$allocationOne])['client_id'];
+    $ledgerStatement = client_ledger_statement($allocationClientId);
+    expect(count($ledgerStatement['entries']) === 4, 'Ledger statement must contain invoice and collection transactions');
+    expect((int)$ledgerStatement['total_debit_cents'] === 30000 && (int)$ledgerStatement['total_cash_cents'] === 15000 && (int)$ledgerStatement['total_discount_cents'] === 1000, 'Ledger debit, cash collection, and discount totals must reconcile');
+    expect((int)$ledgerStatement['total_credit_cents'] === 16000 && (int)$ledgerStatement['balance_cents'] === 14000, 'Ledger credit and closing balance must reconcile');
+    $lastLedgerEntry = $ledgerStatement['entries'][array_key_last($ledgerStatement['entries'])];
+    expect((int)$lastLedgerEntry['balance_cents'] === 14000, 'Ledger running balance must end at the closing balance');
+    $ledgerHtml = client_ledger_pdf_html($ledgerStatement);
+    expect(str_contains($ledgerHtml, 'S.N.') && str_contains($ledgerHtml, 'Debit') && str_contains($ledgerHtml, 'Credit') && str_contains($ledgerHtml, 'Closing Balance'), 'Ledger PDF table must contain the requested statement columns');
+    expect(str_contains($ledgerHtml, 'Client:</span>&nbsp;&nbsp;<strong>') && str_contains($ledgerHtml, '<br><small>') && str_contains($ledgerHtml, 'Total Invoiced:</span>&nbsp;&nbsp;<strong>'), 'Ledger PDF labels and values must include explicit spacing');
+    $ledgerPdf = render_client_ledger_pdf($ledgerStatement);
+    expect(str_starts_with($ledgerPdf, '%PDF-') && str_contains($ledgerPdf, '%%EOF'), 'Client ledger statement must render as a PDF');
     $manualClientId = create_client_account(['client_name' => 'Manual Client', 'company_name' => 'Manual Co', 'client_address' => 'Dhaka, Bangladesh', 'client_phone' => '01812345678', 'client_email' => 'manual@example.test']);
     expect((int)query_one('SELECT COUNT(*) total FROM clients WHERE id=? AND company_name=? AND address=?', [$manualClientId, 'Manual Co', 'Dhaka, Bangladesh'])['total'] === 1, 'Client page must create a standalone client account with address');
     try {
@@ -178,6 +191,15 @@ try {
     if (!is_dir(dirname($qrFullPath))) mkdir(dirname($qrFullPath), 0775, true);
     file_put_contents($qrFullPath, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/S9sAAAAASUVORK5CYII='));
     $pdo->prepare('UPDATE payment_methods SET qr_path=? WHERE id=?')->execute([$qrPath, $methodId]);
+    $collectedInvoice = invoice_rows('WHERE i.id=?', [$first])[0];
+    $collectedItems = query_all('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id', [$first]);
+    $collectedPayments = query_all('SELECT * FROM payments WHERE invoice_id=? ORDER BY paid_at, id', [$first]);
+    ob_start();
+    render_invoice_print($collectedInvoice, $collectedItems, invoice_payment_methods($collectedInvoice), $collectedPayments);
+    $collectionPrintHtml = (string)ob_get_clean();
+    expect(str_contains($collectionPrintHtml, 'Collection History') && str_contains($collectionPrintHtml, format_date($collectedPayments[0]['paid_at'])) && str_contains($collectionPrintHtml, format_money((int)$collectedPayments[0]['amount_cents'])), 'Print invoice must show each collection date and amount');
+    $collectionPdfHtml = invoice_pdf_html($collectedInvoice, $collectedItems, invoice_payment_methods($collectedInvoice), $collectedPayments);
+    expect(str_contains($collectionPdfHtml, 'Collection History') && str_contains($collectionPdfHtml, format_date($collectedPayments[0]['paid_at'])), 'PDF invoice must show collection history');
     $printInvoice = invoice_rows('WHERE i.id=?', [$second])[0];
     $printItems = query_all('SELECT * FROM invoice_items WHERE invoice_id=?', [$second]);
     ob_start();
@@ -192,6 +214,11 @@ try {
     $unassignedInvoice['payment_method_id'] = null;
     $availableMethods = invoice_payment_methods($unassignedInvoice);
     expect(count($availableMethods) === 3, 'Unassigned invoices must show all active payment methods');
+    $collectedUnassignedInvoice = $collectedInvoice;
+    $collectedUnassignedInvoice['payment_method_id'] = null;
+    $collectionPdf = render_invoice_pdf($collectedUnassignedInvoice, $collectedItems, $availableMethods, $collectedPayments);
+    $collectionPageCount = (new \Mpdf\Mpdf(['tempDir' => dirname(__DIR__) . '/storage/mpdf']))->setSourceFile(\setasign\Fpdi\PdfParser\StreamReader::createByString($collectionPdf));
+    expect($collectionPageCount === 1, 'PDF with collection history and three payment methods must fit on one A4 page');
     ob_start();
     render_invoice_print($unassignedInvoice, $printItems, $availableMethods);
     $fallbackPrintHtml = (string)ob_get_clean();

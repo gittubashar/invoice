@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-function render_invoice_print(array $invoice, array $items, array $methods): void
+function render_invoice_print(array $invoice, array $items, array $methods, array $collections = []): void
 {
     $siteTitle = setting('site_title', 'Billflow');
     $slogan = setting('slogan');
@@ -95,6 +95,17 @@ function render_invoice_print(array $invoice, array $items, array $methods): voi
             <div class="total-due"><span>Balance Due</span><strong><?= e(format_money($due)) ?></strong></div>
         </div>
     </div>
+
+    <?php if ($collections): ?>
+    <section class="sheet-collections">
+        <h2>Collection History</h2>
+        <div class="collection-history-grid">
+            <?php foreach ($collections as $collection): ?>
+                <div><span><?= e(format_date($collection['paid_at'])) ?></span><strong><?= e(format_money((int)$collection['amount_cents'])) ?></strong></div>
+            <?php endforeach; ?>
+        </div>
+    </section>
+    <?php endif; ?>
 
     <section class="sheet-payment<?= count($methods) > 1 ? ' multiple-methods' : '' ?>">
         <h2 class="payment-section-title"><span>▣</span> Payment Information</h2>

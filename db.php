@@ -711,6 +711,53 @@ function invoice_rows(string $where = '', array $params = [], string $order = 'i
     return query_all($sql, $params);
 }
 
+function client_ledger_statement(int $clientId): array
+{
+    $client = query_one('SELECT * FROM clients WHERE id=?', [$clientId]);
+    if (!$client) throw new InvalidArgumentException('Client not found.');
+    $events = [];
+    foreach (query_all('SELECT id, number, issue_date, total_cents FROM invoices WHERE client_id=? ORDER BY issue_date, id', [$clientId]) as $invoice) {
+        $events[] = [
+            'date' => $invoice['issue_date'], 'invoice_id' => (int)$invoice['id'], 'invoice_number' => $invoice['number'],
+            'debit_cents' => (int)$invoice['total_cents'], 'credit_cents' => 0,
+            'cash_cents' => 0, 'discount_cents' => 0, 'kind' => 'invoice',
+            'sort_order' => 0, 'source_id' => (int)$invoice['id'],
+        ];
+    }
+    foreach (query_all('SELECT p.id, p.paid_at, p.amount_cents, p.discount_cents, i.id invoice_id, i.number invoice_number FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE i.client_id=? ORDER BY p.paid_at, p.id', [$clientId]) as $payment) {
+        $cash = (int)$payment['amount_cents'];
+        $discount = (int)$payment['discount_cents'];
+        $events[] = [
+            'date' => $payment['paid_at'], 'invoice_id' => (int)$payment['invoice_id'], 'invoice_number' => $payment['invoice_number'],
+            'debit_cents' => 0, 'credit_cents' => $cash + $discount,
+            'cash_cents' => $cash, 'discount_cents' => $discount, 'kind' => 'collection',
+            'sort_order' => 1, 'source_id' => (int)$payment['id'],
+        ];
+    }
+    usort($events, static fn(array $a, array $b): int => [$a['date'], $a['sort_order'], $a['source_id']] <=> [$b['date'], $b['sort_order'], $b['source_id']]);
+    $balance = 0;
+    $totalDebit = 0;
+    $totalCredit = 0;
+    $totalCash = 0;
+    $totalDiscount = 0;
+    foreach ($events as $index => &$event) {
+        $totalDebit += $event['debit_cents'];
+        $totalCredit += $event['credit_cents'];
+        $totalCash += $event['cash_cents'];
+        $totalDiscount += $event['discount_cents'];
+        $balance += $event['debit_cents'] - $event['credit_cents'];
+        $event['serial'] = $index + 1;
+        $event['balance_cents'] = $balance;
+    }
+    unset($event);
+    return [
+        'client' => $client, 'entries' => $events,
+        'total_debit_cents' => $totalDebit, 'total_credit_cents' => $totalCredit,
+        'total_cash_cents' => $totalCash, 'total_discount_cents' => $totalDiscount,
+        'balance_cents' => $balance,
+    ];
+}
+
 function invoice_status(array $invoice): string
 {
     if ((int)$invoice['paid_cents'] >= (int)$invoice['total_cents']) return 'paid';

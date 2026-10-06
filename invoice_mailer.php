@@ -64,7 +64,8 @@ function deliver_invoice_email(array $delivery, bool $force = false): array
         if (!$invoice) throw new RuntimeException('Invoice not found.');
         $items = query_all('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id', [(int)$invoice['id']]);
         $methods = invoice_payment_methods($invoice);
-        $pdf = render_invoice_pdf($invoice, $items, $methods);
+        $collections = query_all('SELECT * FROM payments WHERE invoice_id=? ORDER BY paid_at, id', [(int)$invoice['id']]);
+        $pdf = render_invoice_pdf($invoice, $items, $methods, $collections);
 
         $mail = new PHPMailer\PHPMailer\PHPMailer(true);
         $mail->isSMTP();
