@@ -60,10 +60,12 @@ if ($_GET['page'] === 'new-prefill') {
     $_GET['client_id'] = create_client_account(['client_name'=>'Prefilled Client','company_name'=>'Prefill Co','client_phone'=>'01987654321','client_email'=>'prefill@example.test']);
 }
 if ($_GET['page'] === 'client') {
-    $_GET['id'] = create_client_account([
-        'client_name' => 'Editable Client', 'company_name' => 'Fixture Co', 'client_address' => 'Dhaka',
-        'client_phone' => '01887654321', 'client_email' => 'editable@example.test',
+    $clientInvoiceId = create_invoice([
+        'client_name'=>'Editable Client','company_name'=>'Fixture Co','client_phone'=>'01887654321','client_email'=>'editable@example.test','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Client profile invoice'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['100'],
     ]);
+    $_GET['id'] = (int)query_one('SELECT client_id FROM invoices WHERE id=?', [$clientInvoiceId])['client_id'];
+    update_client_account((int)$_GET['id'], ['client_name'=>'Editable Client','company_name'=>'Fixture Co','client_address'=>'Dhaka','client_phone'=>'01887654321','client_email'=>'editable@example.test']);
     $_GET['edit'] = 1;
 }
 if ($_GET['page'] === 'collections' && $fixturePage !== 'collections-unselected') {
@@ -103,7 +105,7 @@ if ($_GET['page'] === 'new' && (!str_contains($html, 'name="discount_enabled"') 
 if ($fixturePage === 'edit-discount' && (!str_contains($html, 'Invoice Discount') || !str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_value"') || !str_contains($html, 'Saving makes the updated invoice ready to send again'))) throw new RuntimeException('Existing invoice discount controls did not render');
 if ($_GET['page'] === 'invoices' && (!str_contains($html, 'class="row-mail"') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="return_q" value="purple"'))) throw new RuntimeException('Invoice list Send Mail action did not render');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"') || !str_contains($html, '>Ledger</a>') || !str_contains($html, 'page=client-ledger&amp;id='))) throw new RuntimeException('Client creation form or ledger action did not render');
-if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client'))) throw new RuntimeException('Client update/delete controls did not render');
+if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="return_page" value="client"') || !str_contains($html, 'name="return_client_id" value="' . (int)$_GET['id'] . '"'))) throw new RuntimeException('Client update/delete or invoice mail controls did not render');
 if ($_GET['page'] === 'collections') {
     if (!str_contains($html, 'name="q"') || !str_contains($html, 'Name, mobile number, or email') || !str_contains($html, 'data-collection-client-search') || !str_contains($html, 'data-search-url=')) throw new RuntimeException('Live client collection search did not render');
     if ($fixturePage === 'collections-unselected') {
