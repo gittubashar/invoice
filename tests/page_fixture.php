@@ -61,7 +61,7 @@ if ($_GET['page'] === 'new-prefill') {
 }
 if ($_GET['page'] === 'client') {
     $clientInvoiceId = create_invoice([
-        'client_name'=>'Editable Client','company_name'=>'Fixture Co','client_phone'=>'01887654321','client_email'=>'editable@example.test','invoice_type'=>'one_time',
+        'client_name'=>'Editable Client','company_name'=>'Fixture Co','client_phone'=>'01887654321','client_email'=>'','invoice_type'=>'one_time',
         'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Client profile invoice'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['100'],
     ]);
     $_GET['id'] = (int)query_one('SELECT client_id FROM invoices WHERE id=?', [$clientInvoiceId])['client_id'];

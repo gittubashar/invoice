@@ -43,6 +43,30 @@ try {
         if (!str_contains($error->getMessage(), 'fully paid')) throw $error;
     }
     if ((int)query_one('SELECT COUNT(*) total FROM invoice_reminders WHERE invoice_id=?', [$id])['total'] !== 1) throw new RuntimeException('Paid invoice reminder attempt must not create a log');
+
+    $fallbackId = create_invoice([
+        'client_name' => 'Updated Email Client',
+        'client_phone' => '01812345678',
+        'client_email' => '',
+        'invoice_type' => 'one_time',
+        'issue_date' => date('Y-m-d'),
+        'due_date' => add_days(date('Y-m-d'), 7),
+        'item_service_id' => [''],
+        'item_name' => ['Email fallback test'],
+        'item_description' => [''],
+        'item_qty' => ['1'],
+        'item_price' => ['200'],
+    ]);
+    $fallbackInvoice = invoice_rows('WHERE i.id=?', [$fallbackId], 'i.id DESC', 1)[0];
+    update_client_account((int)$fallbackInvoice['client_id'], ['client_name'=>'Updated Email Client','company_name'=>'','client_address'=>'','client_phone'=>'01812345678','client_email'=>'updated@example.test']);
+    $fallbackInvoice = invoice_rows('WHERE i.id=?', [$fallbackId], 'i.id DESC', 1)[0];
+    if (invoice_recipient_email($fallbackInvoice) !== 'updated@example.test') throw new RuntimeException('Current client email was not used as the invoice recipient fallback');
+    if (send_invoice_email_for_invoice($fallbackId)['status'] !== 'pending') throw new RuntimeException('Fallback invoice mail did not reach the SMTP configuration check');
+    $fallbackDelivery = query_one('SELECT recipient,status FROM email_deliveries WHERE invoice_id=?', [$fallbackId]);
+    if (!$fallbackDelivery || $fallbackDelivery['recipient'] !== 'updated@example.test' || $fallbackDelivery['status'] !== 'pending') throw new RuntimeException('Skipped invoice delivery was not repaired with the current client email');
+    if (send_invoice_reminder_for_invoice($fallbackId)['status'] !== 'pending') throw new RuntimeException('Fallback reminder did not reach the SMTP configuration check');
+    $fallbackReminder = query_one('SELECT recipient FROM invoice_reminders WHERE invoice_id=? ORDER BY id DESC LIMIT 1', [$fallbackId]);
+    if (!$fallbackReminder || $fallbackReminder['recipient'] !== 'updated@example.test') throw new RuntimeException('Reminder did not use the current client email');
     echo "Email delivery passed: invoice and reminder queues handle missing SMTP and paid invoices safely.\n";
 } finally {
     close_db();

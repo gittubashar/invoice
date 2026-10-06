@@ -728,13 +728,22 @@ function next_cycle_date(string $current, string $frequency, int $anchorDay, int
 function invoice_rows(string $where = '', array $params = [], string $order = 'i.id DESC', int $limit = 100): array
 {
     $sql = 'SELECT i.*, i.billing_name AS client_name, i.billing_phone AS client_phone,
-            i.billing_email AS client_email, r.frequency,
+            i.billing_email AS client_email, c.email AS account_email, r.frequency,
             COALESCE((SELECT SUM(p.amount_cents + p.discount_cents) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid_cents,
             COALESCE((SELECT SUM(p.discount_cents) FROM payments p WHERE p.invoice_id = i.id), 0) AS discount_cents
             FROM invoices i JOIN clients c ON c.id = i.client_id
             LEFT JOIN recurrences r ON r.id = i.recurrence_id ' . $where .
             ' ORDER BY ' . $order . ' LIMIT ' . (int)$limit;
     return query_all($sql, $params);
+}
+
+function invoice_recipient_email(array $invoice): string
+{
+    foreach (['client_email', 'billing_email', 'account_email'] as $field) {
+        $email = trim((string)($invoice[$field] ?? ''));
+        if (filter_var($email, FILTER_VALIDATE_EMAIL)) return $email;
+    }
+    return '';
 }
 
 function client_ledger_statement(int $clientId): array

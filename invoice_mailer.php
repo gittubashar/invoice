@@ -30,12 +30,19 @@ function invoice_email_configuration(): array
 
 function send_invoice_email_for_invoice(int $invoiceId): array
 {
+    $invoice = invoice_rows('WHERE i.id=?', [$invoiceId], 'i.id DESC', 1)[0] ?? null;
+    if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
+    $recipient = invoice_recipient_email($invoice);
+    if ($recipient === '') return ['status' => 'skipped', 'message' => 'A valid client email address was not provided.'];
+
     $delivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$invoiceId]);
     if (!$delivery) {
-        $invoice = query_one('SELECT billing_email FROM invoices WHERE id=?', [$invoiceId]);
-        $recipient = trim((string)($invoice['billing_email'] ?? ''));
-        if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) return ['status' => 'skipped', 'message' => 'A valid client email address was not provided.'];
         queue_invoice_email(db(), $invoiceId, $recipient);
+        $delivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$invoiceId]);
+    } elseif ($delivery['status'] !== 'sent' && ($delivery['status'] === 'skipped' || (string)$delivery['recipient'] !== $recipient)) {
+        $now = date('Y-m-d H:i:s');
+        db()->prepare("UPDATE email_deliveries SET recipient=?, auto_send=0, status='pending', attempts=0, last_error='', next_attempt_at=?, sent_at=NULL, updated_at=? WHERE id=?")
+            ->execute([$recipient, $now, $now, (int)$delivery['id']]);
         $delivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$invoiceId]);
     }
     if (!$delivery) return ['status' => 'skipped', 'message' => 'The invoice email could not be queued.'];
@@ -51,8 +58,8 @@ function send_invoice_reminder_for_invoice(int $invoiceId): array
     $remaining = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
     if ($remaining < 1) throw new InvalidArgumentException('This invoice is already fully paid.');
 
-    $recipient = trim((string)($invoice['client_email'] ?? $invoice['billing_email'] ?? ''));
-    if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+    $recipient = invoice_recipient_email($invoice);
+    if ($recipient === '') {
         return ['status' => 'skipped', 'message' => 'Add a valid client email address before sending a reminder.'];
     }
 
