@@ -42,6 +42,84 @@ function send_invoice_email_for_invoice(int $invoiceId): array
     return deliver_invoice_email($delivery, true);
 }
 
+function send_invoice_reminder_for_invoice(int $invoiceId): array
+{
+    $pdo = db();
+    $invoice = invoice_rows('WHERE i.id=?', [$invoiceId], 'i.id DESC', 1)[0] ?? null;
+    if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
+
+    $remaining = max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']);
+    if ($remaining < 1) throw new InvalidArgumentException('This invoice is already fully paid.');
+
+    $recipient = trim((string)($invoice['client_email'] ?? $invoice['billing_email'] ?? ''));
+    if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+        return ['status' => 'skipped', 'message' => 'Add a valid client email address before sending a reminder.'];
+    }
+
+    $now = date('Y-m-d H:i:s');
+    $pdo->prepare("INSERT INTO invoice_reminders (invoice_id,recipient,status,attempts,last_error,created_at,updated_at) VALUES (?,?,'pending',0,'',?,?)")
+        ->execute([$invoiceId, $recipient, $now, $now]);
+    $reminderId = (int)$pdo->lastInsertId();
+
+    $config = invoice_email_configuration();
+    if ($config['host'] === '' || !filter_var($config['from_email'], FILTER_VALIDATE_EMAIL)) {
+        $message = 'SMTP Host and From Email are not fully configured.';
+        $pdo->prepare("UPDATE invoice_reminders SET status='pending', last_error=?, updated_at=? WHERE id=?")
+            ->execute([$message, $now, $reminderId]);
+        return ['status' => 'pending', 'message' => $message];
+    }
+
+    $pdo->prepare("UPDATE invoice_reminders SET status='sending', attempts=1, updated_at=? WHERE id=?")
+        ->execute([$now, $reminderId]);
+
+    try {
+        $items = query_all('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id', [$invoiceId]);
+        $methods = invoice_payment_methods($invoice);
+        $collections = query_all('SELECT * FROM payments WHERE invoice_id=? ORDER BY paid_at, id', [$invoiceId]);
+        $pdf = render_invoice_pdf($invoice, $items, $methods, $collections);
+
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        $mail->isSMTP();
+        $mail->Host = $config['host'];
+        $mail->Port = $config['port'];
+        $mail->Timeout = 15;
+        $mail->CharSet = PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+        $mail->SMTPAuth = $config['username'] !== '';
+        if ($mail->SMTPAuth) {
+            $mail->Username = $config['username'];
+            $mail->Password = $config['password'] !== '' ? decrypt_smtp_password($config['password']) : '';
+        }
+        if ($config['encryption'] === 'tls') $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        elseif ($config['encryption'] === 'ssl') $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS;
+        else {
+            $mail->SMTPSecure = '';
+            $mail->SMTPAutoTLS = false;
+        }
+
+        $siteTitle = setting('site_title', 'Billflow');
+        $collected = max(0, (int)$invoice['paid_cents'] - (int)$invoice['discount_cents']);
+        $mail->setFrom($config['from_email'], $config['from_name'] !== '' ? $config['from_name'] : $siteTitle);
+        $mail->addAddress($recipient, (string)$invoice['client_name']);
+        $mail->isHTML(true);
+        $mail->Subject = 'Payment Reminder - Invoice ' . $invoice['number'] . ' - ' . $siteTitle;
+        $mail->Body = '<div style="font-family:Arial,sans-serif;color:#243d34;line-height:1.65"><h2 style="color:#0c826e">Payment Reminder</h2><p>Dear ' . e($invoice['client_name']) . ',</p><p>This is a reminder that the following invoice has an outstanding balance.</p><table cellpadding="5" cellspacing="0" style="border-collapse:collapse"><tr><td><strong>Invoice No.</strong></td><td>' . e($invoice['number']) . '</td></tr><tr><td><strong>Due Date</strong></td><td>' . e(format_date($invoice['due_date'])) . '</td></tr><tr><td><strong>Grand Total</strong></td><td>' . e(format_money((int)$invoice['total_cents'])) . '</td></tr><tr><td><strong>Collected</strong></td><td>' . e(format_money($collected)) . '</td></tr><tr><td><strong>Balance Due</strong></td><td><strong>' . e(format_money($remaining)) . '</strong></td></tr></table><p>The latest invoice PDF is attached for your reference. Please mention the invoice number when making payment.</p><p>Thank you,<br>' . e($siteTitle) . '</p></div>';
+        $mail->AltBody = "Payment Reminder\nInvoice: {$invoice['number']}\nDue date: " . format_date($invoice['due_date']) . "\nGrand total: " . format_money((int)$invoice['total_cents']) . "\nCollected: " . format_money($collected) . "\nBalance due: " . format_money($remaining) . "\n\nPlease mention the invoice number when making payment.\n{$siteTitle}";
+        $filename = preg_replace('/[^A-Za-z0-9_-]/', '_', (string)$invoice['number']) . '.pdf';
+        $mail->addStringAttachment($pdf, $filename, PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64, 'application/pdf');
+        $mail->send();
+
+        $sentAt = date('Y-m-d H:i:s');
+        $pdo->prepare("UPDATE invoice_reminders SET status='sent', last_error='', sent_at=?, updated_at=? WHERE id=?")
+            ->execute([$sentAt, $sentAt, $reminderId]);
+        return ['status' => 'sent', 'message' => 'The payment reminder has been sent by email.'];
+    } catch (Throwable $error) {
+        $message = mb_substr($error->getMessage(), 0, 1000);
+        $pdo->prepare("UPDATE invoice_reminders SET status='failed', last_error=?, updated_at=? WHERE id=?")
+            ->execute([$message, date('Y-m-d H:i:s'), $reminderId]);
+        return ['status' => 'failed', 'message' => $message];
+    }
+}
+
 function deliver_invoice_email(array $delivery, bool $force = false): array
 {
     $pdo = db();

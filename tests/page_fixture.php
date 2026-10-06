@@ -36,7 +36,7 @@ if (in_array($fixturePage, ['invoice-identity-on', 'invoice-identity-off'], true
 }
 if ($fixturePage === 'invoice-collection') {
     $_GET['id'] = create_invoice([
-        'client_name'=>'Partial Client','client_phone'=>'01376543210','invoice_type'=>'one_time',
+        'client_name'=>'Partial Client','client_phone'=>'01376543210','client_email'=>'partial@example.test','invoice_type'=>'one_time',
         'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Partial collection invoice'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['1000'],
     ]);
     collect_payment((int)$_GET['id'], '350', 'cash', 'PARTIAL-1', '', date('Y-m-d'));
@@ -103,9 +103,9 @@ if ($_GET['page'] === 'payment-methods' && (!str_contains($html, 'name="qr_file"
 if ($_GET['page'] === 'new' && !str_contains($html, 'name="payment_method_id"')) throw new RuntimeException('Invoice payment method selector did not render');
 if ($_GET['page'] === 'new' && (!str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_type"') || !str_contains($html, 'name="discount_scope"') || !str_contains($html, 'id="summary-discount"'))) throw new RuntimeException('Recurring invoice discount controls did not render');
 if ($fixturePage === 'edit-discount' && (!str_contains($html, 'Invoice Discount') || !str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_value"') || !str_contains($html, 'Saving makes the updated invoice ready to send again'))) throw new RuntimeException('Existing invoice discount controls did not render');
-if ($_GET['page'] === 'invoices' && (!str_contains($html, 'class="row-mail"') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="return_q" value="purple"'))) throw new RuntimeException('Invoice list Send Mail action did not render');
+if ($_GET['page'] === 'invoices' && (!str_contains($html, 'class="row-mail"') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="action" value="send_invoice_reminder"') || !str_contains($html, '> Send Reminder</button>') || !str_contains($html, 'name="return_q" value="purple"'))) throw new RuntimeException('Invoice list mail actions did not render');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"') || !str_contains($html, '>Ledger</a>') || !str_contains($html, 'page=client-ledger&amp;id='))) throw new RuntimeException('Client creation form or ledger action did not render');
-if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="return_page" value="client"') || !str_contains($html, 'name="return_client_id" value="' . (int)$_GET['id'] . '"'))) throw new RuntimeException('Client update/delete or invoice mail controls did not render');
+if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, '> Send Reminder</button>') || !str_contains($html, 'name="return_page" value="client"') || !str_contains($html, 'name="return_client_id" value="' . (int)$_GET['id'] . '"'))) throw new RuntimeException('Client update/delete or invoice mail controls did not render');
 if ($_GET['page'] === 'collections') {
     if (!str_contains($html, 'name="q"') || !str_contains($html, 'Name, mobile number, or email') || !str_contains($html, 'data-collection-client-search') || !str_contains($html, 'data-search-url=')) throw new RuntimeException('Live client collection search did not render');
     if ($fixturePage === 'collections-unselected') {
@@ -125,7 +125,7 @@ if ($_GET['page'] === 'client-ledger' && (!str_contains($html, 'LEDGER HISTORY')
 if ($_GET['page'] === 'receipt' && !str_contains($html, 'MONEY RECEIPT')) throw new RuntimeException('Money receipt did not render');
 if ($fixturePage === 'invoice-identity-off' && (str_contains($html, 'class="paper-logo"') || str_contains($html, 'class="paper-brand"') || str_contains($html, 'class="paper-slogan"'))) throw new RuntimeException('Disabled invoice identity elements rendered');
 if ($fixturePage === 'invoice-identity-on' && (!str_contains($html, 'class="paper-brand"') || !str_contains($html, 'class="paper-slogan"'))) throw new RuntimeException('Enabled invoice title or slogan did not render');
-if ($fixturePage === 'invoice-collection' && (!str_contains($html, 'class="paper-collection-history"') || !str_contains($html, 'Collection History') || !str_contains($html, 'BDT 350'))) throw new RuntimeException('Invoice collection date and amount did not render');
+if ($fixturePage === 'invoice-collection' && (!str_contains($html, 'class="paper-collection-history"') || !str_contains($html, 'Collection History') || !str_contains($html, 'BDT 350') || !str_contains($html, '> Send Reminder</button>'))) throw new RuntimeException('Invoice collection history or reminder action did not render');
 $modulePages = [
     'invoice-dashboard' => ['Invoice', 'Create Invoice', 'Recurring Billing'],
     'clients' => ['Clients', 'Client Ledger'],

@@ -214,12 +214,24 @@ CREATE TABLE IF NOT EXISTS email_deliveries (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS invoice_reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    recipient TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed','skipped')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
+    sent_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_due ON invoices(due_date);
 CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_recurrences_next ON recurrences(status, next_issue_date);
 CREATE INDEX IF NOT EXISTS idx_payment_methods_active ON payment_methods(active, name);
 CREATE INDEX IF NOT EXISTS idx_email_deliveries_queue ON email_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_invoice_reminders_invoice ON invoice_reminders(invoice_id, created_at);
 SQL);
 
     // Add fields introduced after the first release without replacing saved records.
@@ -457,6 +469,20 @@ function migrate_mysql(PDO $pdo): void
             CONSTRAINT fk_email_deliveries_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
             CONSTRAINT chk_email_deliveries_status CHECK (status IN ('pending','sending','sent','failed','skipped')),
             KEY idx_email_deliveries_queue (status, next_attempt_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS invoice_reminders (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            recipient VARCHAR(190) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            last_error VARCHAR(1000) NOT NULL DEFAULT '',
+            sent_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_invoice_reminders_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+            CONSTRAINT chk_invoice_reminders_status CHECK (status IN ('pending','sending','sent','failed','skipped')),
+            KEY idx_invoice_reminders_invoice (invoice_id, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
     foreach ($statements as $statement) $pdo->exec($statement);

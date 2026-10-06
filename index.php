@@ -228,6 +228,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ((string)($_POST['return_page'] ?? '') === 'client') redirect('client', ['id' => (int)($_POST['return_client_id'] ?? 0)]);
             redirect('invoice', ['id' => $id]);
         }
+        if ($action === 'send_invoice_reminder') {
+            $id = (int)($_POST['invoice_id'] ?? 0);
+            if (!function_exists('send_invoice_reminder_for_invoice')) throw new RuntimeException('Run composer install on the server to enable reminder email delivery.');
+            $delivery = send_invoice_reminder_for_invoice($id);
+            flash($delivery['status'] === 'sent' ? 'success' : 'error', $delivery['message']);
+            if ((string)($_POST['return_page'] ?? '') === 'invoices') {
+                redirect('invoices', ['q' => trim((string)($_POST['return_q'] ?? '')), 'filter' => (string)($_POST['return_filter'] ?? 'all')]);
+            }
+            if ((string)($_POST['return_page'] ?? '') === 'client') redirect('client', ['id' => (int)($_POST['return_client_id'] ?? 0)]);
+            redirect('invoice', ['id' => $id]);
+        }
         if ($action === 'save_service') {
             $name = trim((string)($_POST['name'] ?? ''));
             $description = trim((string)($_POST['description'] ?? ''));
@@ -284,7 +295,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['old_collection'] = $_POST;
             redirect('collections', ['client_id' => (int)($_POST['client_id'] ?? 0)]);
         }
-        if ($action === 'retry_invoice_email') {
+        if (in_array($action, ['retry_invoice_email', 'send_invoice_reminder'], true)) {
             if ((string)($_POST['return_page'] ?? '') === 'invoices') redirect('invoices', ['q' => trim((string)($_POST['return_q'] ?? '')), 'filter' => (string)($_POST['return_filter'] ?? 'all')]);
             if ((string)($_POST['return_page'] ?? '') === 'client') redirect('client', ['id' => (int)($_POST['return_client_id'] ?? 0)]);
             redirect('invoice', ['id' => (int)($_POST['invoice_id'] ?? 0)]);
@@ -446,13 +457,17 @@ function invoice_table(array $invoices, bool $showMailAction = false, array $ret
     echo '<div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Client</th><th>Issue / Due</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>';
     foreach ($invoices as $invoice) {
         $mailAction = '';
+        $reminderAction = '';
         if ($showMailAction) {
             $hasEmail = filter_var((string)($invoice['client_email'] ?? ''), FILTER_VALIDATE_EMAIL) !== false;
             $returnPage = (string)($returnParams['page'] ?? 'invoices');
             if (!in_array($returnPage, ['invoices', 'client'], true)) $returnPage = 'invoices';
             $mailAction = '<form method="post" class="row-mail-form">' . csrf_field() . '<input type="hidden" name="action" value="retry_invoice_email"><input type="hidden" name="invoice_id" value="' . (int)$invoice['id'] . '"><input type="hidden" name="return_page" value="' . e($returnPage) . '"><input type="hidden" name="return_client_id" value="' . (int)($returnParams['client_id'] ?? 0) . '"><input type="hidden" name="return_q" value="' . e((string)($returnParams['q'] ?? '')) . '"><input type="hidden" name="return_filter" value="' . e((string)($returnParams['filter'] ?? 'all')) . '"><button class="row-mail" type="submit"' . ($hasEmail ? ' title="Send invoice PDF to ' . e((string)$invoice['client_email']) . '"' : ' disabled title="Add a valid client email address before sending"') . '>' . icon('mail',14) . ' Send Mail</button></form>';
+            if (max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents']) > 0) {
+                $reminderAction = '<form method="post" class="row-mail-form">' . csrf_field() . '<input type="hidden" name="action" value="send_invoice_reminder"><input type="hidden" name="invoice_id" value="' . (int)$invoice['id'] . '"><input type="hidden" name="return_page" value="' . e($returnPage) . '"><input type="hidden" name="return_client_id" value="' . (int)($returnParams['client_id'] ?? 0) . '"><input type="hidden" name="return_q" value="' . e((string)($returnParams['q'] ?? '')) . '"><input type="hidden" name="return_filter" value="' . e((string)($returnParams['filter'] ?? 'all')) . '"><button class="row-reminder" type="submit"' . ($hasEmail ? ' title="Send payment reminder to ' . e((string)$invoice['client_email']) . '"' : ' disabled title="Add a valid client email address before sending a reminder"') . '>' . icon('clock',14) . ' Send Reminder</button></form>';
+            }
         }
-        echo '<tr><td><a class="strong-link" href="' . e(url('invoice', ['id' => $invoice['id']])) . '">' . e($invoice['number']) . '</a><small>' . ($invoice['recurrence_id'] ? '↻ ' . frequency_label($invoice['frequency']) : 'One-time') . '</small></td><td><strong>' . e($invoice['client_name']) . '</strong><small>' . e($invoice['client_phone']) . '</small></td><td>' . e(format_date($invoice['issue_date'])) . '<small>Due ' . e(format_date($invoice['due_date'])) . '</small></td><td><strong>' . format_money((int)$invoice['total_cents']) . '</strong><small>Balance Due ' . format_money(max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents'])) . '</small></td><td>' . badge($invoice) . '</td><td><div class="row-actions">' . $mailAction . '<a class="row-view" href="' . e(url('pdf', ['id' => $invoice['id']])) . '" target="_blank" rel="noopener noreferrer" aria-label="Invoice PDF Open in a new tab">PDF View</a><a class="row-edit" href="' . e(url('edit', ['id' => $invoice['id']])) . '">Edit</a><a class="row-arrow" href="' . e(url('invoice', ['id' => $invoice['id']])) . '" aria-label="View Invoice">' . icon('chevron', 18) . '</a></div></td></tr>';
+        echo '<tr><td><a class="strong-link" href="' . e(url('invoice', ['id' => $invoice['id']])) . '">' . e($invoice['number']) . '</a><small>' . ($invoice['recurrence_id'] ? '↻ ' . frequency_label($invoice['frequency']) : 'One-time') . '</small></td><td><strong>' . e($invoice['client_name']) . '</strong><small>' . e($invoice['client_phone']) . '</small></td><td>' . e(format_date($invoice['issue_date'])) . '<small>Due ' . e(format_date($invoice['due_date'])) . '</small></td><td><strong>' . format_money((int)$invoice['total_cents']) . '</strong><small>Balance Due ' . format_money(max(0, (int)$invoice['total_cents'] - (int)$invoice['paid_cents'])) . '</small></td><td>' . badge($invoice) . '</td><td><div class="row-actions">' . $mailAction . $reminderAction . '<a class="row-view" href="' . e(url('pdf', ['id' => $invoice['id']])) . '" target="_blank" rel="noopener noreferrer" aria-label="Invoice PDF Open in a new tab">PDF View</a><a class="row-edit" href="' . e(url('edit', ['id' => $invoice['id']])) . '">Edit</a><a class="row-arrow" href="' . e(url('invoice', ['id' => $invoice['id']])) . '" aria-label="View Invoice">' . icon('chevron', 18) . '</a></div></td></tr>';
     }
     echo '</tbody></table></div>';
 }
@@ -703,14 +718,25 @@ case 'download':
     $contactDetails = array_values(array_filter([setting('mobile_number'), setting('email')], static fn($value) => $value !== ''));
     $contactText = implode(' · ', array_map('e', $contactDetails));
     $emailDelivery = query_one('SELECT * FROM email_deliveries WHERE invoice_id=?', [$id]);
+    $latestReminder = query_one('SELECT * FROM invoice_reminders WHERE invoice_id=? ORDER BY id DESC LIMIT 1', [$id]);
+    $sentReminderCount = (int)(query_one("SELECT COUNT(*) total FROM invoice_reminders WHERE invoice_id=? AND status='sent'", [$id])['total'] ?? 0);
+    $hasReminderEmail = filter_var((string)($invoice['client_email'] ?? ''), FILTER_VALIDATE_EMAIL) !== false;
     begin_page($invoice['number'], 'invoice', 'Invoice details, collections, and payment history.');
-    echo '<div class="detail-actions"><a class="btn btn-outline" href="' . e(url('edit', ['id' => $id])) . '">' . icon('edit', 17) . ' Edit</a><a class="btn btn-outline" target="_blank" rel="noopener noreferrer" href="' . e(url('pdf', ['id' => $id])) . '">' . icon('print', 17) . ' PDF View</a></div>';
+    echo '<div class="detail-actions">';
+    if ($remaining > 0) echo '<form method="post">' . csrf_field() . '<input type="hidden" name="action" value="send_invoice_reminder"><input type="hidden" name="invoice_id" value="' . $id . '"><button class="btn btn-reminder" type="submit"' . ($hasReminderEmail ? ' title="Send payment reminder to ' . e((string)$invoice['client_email']) . '"' : ' disabled title="Add a valid client email address before sending a reminder"') . '>' . icon('clock', 17) . ' Send Reminder</button></form>';
+    echo '<a class="btn btn-outline" href="' . e(url('edit', ['id' => $id])) . '">' . icon('edit', 17) . ' Edit</a><a class="btn btn-outline" target="_blank" rel="noopener noreferrer" href="' . e(url('pdf', ['id' => $id])) . '">' . icon('print', 17) . ' PDF View</a></div>';
     if ($emailDelivery) {
         $emailLabels = ['pending' => 'Email Pending', 'sending' => 'Sending Email', 'sent' => 'Email Sent', 'failed' => 'Email Delivery Failed', 'skipped' => 'Email Not Sent'];
         $emailStatus = (string)$emailDelivery['status'];
         echo '<div class="email-delivery-status email-' . e($emailStatus) . '"><div><strong>' . e($emailLabels[$emailStatus] ?? $emailStatus) . '</strong><span>' . e($emailDelivery['recipient']) . ($emailDelivery['sent_at'] ? ' · ' . e(format_date(substr($emailDelivery['sent_at'], 0, 10))) : '') . '</span></div>';
         if (in_array($emailStatus, ['pending', 'failed'], true)) echo '<form method="post">' . csrf_field() . '<input type="hidden" name="action" value="retry_invoice_email"><input type="hidden" name="invoice_id" value="' . $id . '"><button class="plain-link" type="submit">Send Mail</button></form>';
         echo '</div>';
+    }
+    if ($latestReminder) {
+        $reminderStatus = (string)$latestReminder['status'];
+        $reminderLabels = ['pending' => 'Reminder Pending', 'sending' => 'Sending Reminder', 'sent' => 'Reminder Sent', 'failed' => 'Reminder Failed', 'skipped' => 'Reminder Not Sent'];
+        $reminderDate = $latestReminder['sent_at'] ?: $latestReminder['created_at'];
+        echo '<div class="email-delivery-status reminder-' . e($reminderStatus) . '"><div><strong>' . e($reminderLabels[$reminderStatus] ?? $reminderStatus) . '</strong><span>' . e($latestReminder['recipient']) . ($reminderDate ? ' · ' . e(date('d M Y, h:i A', strtotime((string)$reminderDate))) : '') . ($sentReminderCount > 0 ? ' · ' . $sentReminderCount . ' sent' : '') . '</span>' . ($latestReminder['last_error'] ? '<small>' . e($latestReminder['last_error']) . '</small>' : '') . '</div></div>';
     }
     echo '<div class="invoice-detail-grid"><section class="panel invoice-paper"><div class="paper-head"><div class="paper-identity"><div class="paper-brand-wrap">' . ($showInvoiceLogo ? '<img class="paper-logo" src="' . e($invoiceLogo) . '" alt="' . e($siteTitle) . ' logo">' : '') . ($showInvoiceTitle ? '<span class="paper-brand">' . e($siteTitle) . '<span>.</span></span>' : '') . '</div>' . ($showInvoiceSlogan ? '<span class="paper-slogan">' . e($siteSlogan) . '</span>' : '') . '<p>INVOICE</p></div><div class="paper-status">' . badge($invoice) . '<strong>' . e($invoice['number']) . '</strong></div></div><div class="paper-meta"><div><span>Bill To</span><strong>' . e($invoice['client_name']) . '</strong>' . ($invoice['billing_company_name'] !== '' ? '<p><strong>' . e($invoice['billing_company_name']) . '</strong></p>' : '') . '<p>' . e($invoice['client_phone']) . '</p>' . ($invoice['client_email'] !== '' ? '<p>' . e($invoice['client_email']) . '</p>' : '') . '</div><div><span>Issue Date</span><strong>' . e(format_date($invoice['issue_date'])) . '</strong><span class="meta-gap">Due Date</span><strong>' . e(format_date($invoice['due_date'])) . '</strong></div></div><div class="table-wrap"><table class="items-table"><thead><tr><th>Service / Item</th><th>Quantity</th><th>Price</th><th>Total</th></tr></thead><tbody>';
     foreach ($items as $item) echo '<tr><td><strong>' . e($item['name']) . '</strong>' . ($item['description'] ? '<small>' . e($item['description']) . '</small>' : '') . '</td><td>' . e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) . '</td><td>' . format_money((int)$item['unit_price_cents']) . '</td><td><strong>' . format_money((int)$item['total_cents']) . '</strong></td></tr>';

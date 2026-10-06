@@ -29,7 +29,21 @@ try {
     if ($delivery['status'] !== 'pending') throw new RuntimeException('Missing SMTP configuration must keep delivery pending');
     $queued = query_one('SELECT status, attempts, last_error FROM email_deliveries WHERE invoice_id=?', [$id]);
     if ($queued['status'] !== 'pending' || (int)$queued['attempts'] !== 0 || $queued['last_error'] === '') throw new RuntimeException('Pending delivery state is invalid');
-    echo "Email delivery passed: invoice queued and missing SMTP handled safely.\n";
+
+    $reminder = send_invoice_reminder_for_invoice($id);
+    if ($reminder['status'] !== 'pending') throw new RuntimeException('Missing SMTP configuration must keep reminder pending');
+    $reminderLog = query_one('SELECT recipient,status,attempts,last_error FROM invoice_reminders WHERE invoice_id=? ORDER BY id DESC LIMIT 1', [$id]);
+    if (!$reminderLog || $reminderLog['recipient'] !== 'client@example.test' || $reminderLog['status'] !== 'pending' || (int)$reminderLog['attempts'] !== 0 || $reminderLog['last_error'] === '') throw new RuntimeException('Reminder delivery log is invalid');
+
+    collect_payment($id, '100', 'cash', 'PAID-FOR-REMINDER-TEST', '', date('Y-m-d'));
+    try {
+        send_invoice_reminder_for_invoice($id);
+        throw new RuntimeException('A paid invoice accepted a payment reminder');
+    } catch (InvalidArgumentException $error) {
+        if (!str_contains($error->getMessage(), 'fully paid')) throw $error;
+    }
+    if ((int)query_one('SELECT COUNT(*) total FROM invoice_reminders WHERE invoice_id=?', [$id])['total'] !== 1) throw new RuntimeException('Paid invoice reminder attempt must not create a log');
+    echo "Email delivery passed: invoice and reminder queues handle missing SMTP and paid invoices safely.\n";
 } finally {
     close_db();
     foreach ([$path, $path . '-wal', $path . '-shm', $path . '.key'] as $file) if (is_file($file)) unlink($file);
