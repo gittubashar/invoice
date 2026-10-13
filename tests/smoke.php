@@ -62,6 +62,15 @@ try {
     expect(query_one('SELECT billing_company_name FROM invoices WHERE id=?', [$first])['billing_company_name'] === 'Example Ltd', 'Old invoice company snapshot must remain unchanged');
     expect(query_one('SELECT billing_company_name FROM invoices WHERE id=?', [$second])['billing_company_name'] === 'Renamed Ltd', 'Recurring first invoice must store company');
     expect((int)query_one('SELECT total_cents FROM invoices WHERE id=?', [$first])['total_cents'] === 170000, 'Invoice total must equal items');
+    $initialDiscountInvoice = create_invoice(array_replace($base, [
+        'invoice_type' => 'one_time', 'company_name' => 'Renamed Ltd',
+        'item_service_id' => ['', '', ''], 'item_name' => ['Initial plan', '', ''], 'item_description' => ['', '', ''],
+        'item_qty' => ['2', '1', '1'], 'item_price' => ['500', '', ''],
+        'initial_discount_enabled' => '1', 'initial_discount_type' => 'percent', 'initial_discount_value' => '10', 'initial_discount_note' => '',
+    ]));
+    $initialDiscountRow = query_one('SELECT subtotal_cents, invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE id=?', [$initialDiscountInvoice]);
+    expect((int)$initialDiscountRow['subtotal_cents'] === 100000 && (int)$initialDiscountRow['invoice_discount_cents'] === 10000 && (int)$initialDiscountRow['total_cents'] === 90000, 'Initial Discount must reduce the current invoice and ignore unused ruled rows');
+    expect($initialDiscountRow['invoice_discount_label'] === '10% Initial Discount' && (int)query_one('SELECT COUNT(*) total FROM invoice_items WHERE invoice_id=?', [$initialDiscountInvoice])['total'] === 1, 'Initial Discount label and ruled-line item parsing must be saved');
     expect((int)query_one('SELECT payment_method_id FROM invoices WHERE id=?', [$first])['payment_method_id'] === $methodId, 'Invoice must store selected payment method');
     expect((int)query_one('SELECT payment_method_id FROM recurrences WHERE id=(SELECT recurrence_id FROM invoices WHERE id=?)', [$second])['payment_method_id'] === $methodId, 'Recurring schedule must store selected method');
     collect_payment($first, '500', 'bkash', 'TXN123', '', date('Y-m-d'));
@@ -87,6 +96,20 @@ try {
     $recurrenceId = (int)query_one('SELECT recurrence_id FROM invoices WHERE id=?', [$second])['recurrence_id'];
     update_recurrence_frequency($recurrenceId, 'half_yearly');
     expect(query_one('SELECT frequency FROM recurrences WHERE id=?', [$recurrenceId])['frequency'] === 'half_yearly', 'Billing cycle must be editable');
+    $introInvoice = create_invoice(array_replace($base, [
+        'invoice_type' => 'recurring', 'frequency' => 'monthly', 'issue_date' => date('Y-m-d'), 'due_date' => add_days(date('Y-m-d'), 7),
+        'item_service_id' => [''], 'item_name' => ['Intro subscription'], 'item_description' => [''], 'item_qty' => ['1'], 'item_price' => ['1000'],
+        'initial_discount_enabled' => '1', 'initial_discount_type' => 'fixed', 'initial_discount_value' => '125', 'initial_discount_note' => 'Welcome credit',
+        'discount_enabled' => '1', 'discount_type' => 'percent', 'discount_value' => '10', 'discount_scope' => 'limited', 'discount_cycles' => '2', 'discount_note' => 'Renewal offer',
+    ]));
+    $introRow = query_one('SELECT recurrence_id, invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE id=?', [$introInvoice]);
+    expect((int)$introRow['invoice_discount_cents'] === 12500 && (int)$introRow['total_cents'] === 87500 && $introRow['invoice_discount_label'] === 'Welcome credit', 'Initial Discount must take precedence on the first recurring invoice');
+    $introRecurrenceId = (int)$introRow['recurrence_id'];
+    expect((int)query_one('SELECT discount_cycles_remaining FROM recurrences WHERE id=?', [$introRecurrenceId])['discount_cycles_remaining'] === 2, 'Initial Discount must not consume a future recurring discount cycle');
+    $pdo->prepare('UPDATE recurrences SET next_issue_date=? WHERE id=?')->execute([add_days(date('Y-m-d'), -1), $introRecurrenceId]);
+    expect(generate_due_invoices() === 1, 'Recurring schedule with Initial Discount must generate its next invoice');
+    $introRenewal = query_one('SELECT invoice_discount_cents, invoice_discount_label, total_cents FROM invoices WHERE recurrence_id=? ORDER BY id DESC LIMIT 1', [$introRecurrenceId]);
+    expect((int)$introRenewal['invoice_discount_cents'] === 10000 && (int)$introRenewal['total_cents'] === 90000 && $introRenewal['invoice_discount_label'] === 'Renewal offer', 'Future recurring invoice must use the recurring discount instead of Initial Discount');
     $discountedInvoice = create_invoice(array_replace($base, [
         'invoice_type' => 'recurring', 'frequency' => 'monthly', 'issue_date' => date('Y-m-d'), 'due_date' => add_days(date('Y-m-d'), 7),
         'item_service_id' => [''], 'item_name' => ['Discounted subscription'], 'item_description' => [''], 'item_qty' => ['1'], 'item_price' => ['1000'],
@@ -227,6 +250,55 @@ try {
     expect(str_starts_with($pdf, '%PDF-') && str_contains($pdf, '%%EOF') && strlen($pdf) > 10000, 'Download must be a complete PDF file');
     $pageCount = (new \Mpdf\Mpdf(['tempDir' => dirname(__DIR__) . '/storage/mpdf']))->setSourceFile(\setasign\Fpdi\PdfParser\StreamReader::createByString($pdf));
     expect($pageCount === 1, 'PDF with three payment methods must fit on one A4 page');
+
+    $archiveInvoice = create_invoice([
+        'client_name'=>'Archive Client','client_phone'=>'01345678901','client_email'=>'archive@example.test','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Archived service'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['500'],
+    ]);
+    collect_payment($archiveInvoice, '125', 'cash', 'ARCHIVE-TEST', '', date('Y-m-d'));
+    $archiveClientId = (int)query_one('SELECT client_id FROM invoices WHERE id=?', [$archiveInvoice])['client_id'];
+    expect(count(client_ledger_statement($archiveClientId)['entries']) === 2, 'Active invoice and payment must appear in the client ledger');
+    archive_invoice($archiveInvoice);
+    expect(invoice_rows('WHERE i.id=?', [$archiveInvoice]) === [], 'Archived invoice must be excluded from operational invoice queries');
+    expect(count(invoice_rows('WHERE i.id=?', [$archiveInvoice], 'i.id DESC', 1, true)) === 1, 'Archived invoice must remain available to Invoice Control');
+    expect(client_ledger_statement($archiveClientId)['entries'] === [], 'Archived invoice amount and collection must not affect the client ledger');
+    expect((int)query_one("SELECT COUNT(*) total FROM email_deliveries WHERE invoice_id=? AND status='skipped' AND auto_send=0", [$archiveInvoice])['total'] === 1, 'Archiving must stop pending invoice email delivery');
+    restore_invoice($archiveInvoice);
+    expect(count(invoice_rows('WHERE i.id=?', [$archiveInvoice])) === 1 && count(client_ledger_statement($archiveClientId)['entries']) === 2, 'Restoring must return the invoice and collection to operational records');
+
+    $regularAdminHash = password_hash('regular-admin-password', PASSWORD_DEFAULT);
+    $pdo->prepare("INSERT INTO admins (name,email,password_hash,role) VALUES (?,?,?,'admin')")->execute(['Regular Admin', 'regular-admin@example.test', $regularAdminHash]);
+    $regularAdminId = (int)$pdo->lastInsertId();
+    try {
+        hard_delete_invoice($archiveInvoice, $regularAdminId);
+        throw new RuntimeException('A regular Admin permanently deleted an invoice');
+    } catch (RuntimeException $expected) {
+        expect(str_contains($expected->getMessage(), 'Super Admin'), 'Hard delete denial must explain the required role');
+    }
+    $superAdminId = (int)query_one('SELECT id FROM admins WHERE role=? ORDER BY id LIMIT 1', ['super_admin'])['id'];
+    $paidProtectedInvoice = create_invoice([
+        'client_name'=>'Paid Protected Client','client_phone'=>'01345678902','client_email'=>'paid-protected@example.test','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Paid protected service'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['200'],
+    ]);
+    collect_payment($paidProtectedInvoice, '200', 'cash', 'PAID-PROTECTED', '', date('Y-m-d'));
+    try {
+        archive_invoice($paidProtectedInvoice);
+        throw new RuntimeException('A fully paid invoice was archived');
+    } catch (InvalidArgumentException $expected) {
+        expect(str_contains($expected->getMessage(), 'fully paid'), 'Paid invoice archive denial must explain its paid status');
+    }
+    try {
+        hard_delete_invoice($paidProtectedInvoice, $superAdminId);
+        throw new RuntimeException('A fully paid invoice was permanently deleted');
+    } catch (InvalidArgumentException $expected) {
+        expect(str_contains($expected->getMessage(), 'fully paid'), 'Paid invoice hard delete denial must explain its paid status');
+    }
+    expect(query_one('SELECT id FROM invoices WHERE id=?', [$paidProtectedInvoice]) !== false, 'Paid invoice must remain protected from Invoice Control deletion');
+    hard_delete_invoice($archiveInvoice, $superAdminId);
+    expect(query_one('SELECT id FROM invoices WHERE id=?', [$archiveInvoice]) === false, 'Super Admin hard delete must remove the invoice');
+    expect((int)query_one('SELECT COUNT(*) total FROM invoice_items WHERE invoice_id=?', [$archiveInvoice])['total'] === 0, 'Hard delete must cascade to invoice items');
+    expect((int)query_one('SELECT COUNT(*) total FROM payments WHERE invoice_id=?', [$archiveInvoice])['total'] === 0, 'Hard delete must cascade to collections');
+    expect((int)query_one('SELECT COUNT(*) total FROM email_deliveries WHERE invoice_id=?', [$archiveInvoice])['total'] === 0, 'Hard delete must cascade to email delivery records');
     $changedHash = password_hash('new-local-password', PASSWORD_DEFAULT);
     $pdo->prepare('UPDATE admins SET password_hash=? WHERE email=?')->execute([$changedHash, DEFAULT_SUPER_ADMIN_EMAIL]);
     $pdo = null;

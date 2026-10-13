@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     invoice_discount_cents INTEGER NOT NULL DEFAULT 0,
     invoice_discount_label TEXT NOT NULL DEFAULT '',
     total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
+    archived_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (recurrence_id, cycle_date)
 );
@@ -278,9 +279,11 @@ SQL);
         'invoice_discount_value' => 'INTEGER NOT NULL DEFAULT 0',
         'invoice_discount_cents' => 'INTEGER NOT NULL DEFAULT 0',
         'invoice_discount_label' => "TEXT NOT NULL DEFAULT ''",
+        'archived_at' => 'TEXT',
     ] as $field => $definition) {
         if (!in_array($field, $invoiceColumns, true)) $pdo->exec("ALTER TABLE invoices ADD COLUMN {$field} {$definition}");
     }
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_invoices_archived ON invoices(archived_at)');
     $pdo->exec('UPDATE invoices SET subtotal_cents = total_cents WHERE subtotal_cents = 0 AND total_cents > 0');
     foreach (['billing_name' => 'name', 'billing_phone' => 'phone', 'billing_email' => 'email'] as $invoiceField => $clientField) {
         if (!in_array($invoiceField, $invoiceColumns, true)) {
@@ -416,6 +419,7 @@ function migrate_mysql(PDO $pdo): void
             invoice_discount_label VARCHAR(255) NOT NULL DEFAULT '',
             total_cents BIGINT UNSIGNED NOT NULL,
             payment_method_id BIGINT UNSIGNED NULL,
+            archived_at DATETIME NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT fk_invoices_client FOREIGN KEY (client_id) REFERENCES clients(id),
             CONSTRAINT fk_invoices_recurrence FOREIGN KEY (recurrence_id) REFERENCES recurrences(id),
@@ -508,6 +512,7 @@ function migrate_mysql(PDO $pdo): void
         'invoice_discount_value' => 'BIGINT UNSIGNED NOT NULL DEFAULT 0',
         'invoice_discount_cents' => 'BIGINT UNSIGNED NOT NULL DEFAULT 0',
         'invoice_discount_label' => "VARCHAR(255) NOT NULL DEFAULT ''",
+        'archived_at' => 'DATETIME NULL',
     ] as $field => $definition) {
         if (!in_array($field, $invoiceColumns, true)) $pdo->exec("ALTER TABLE invoices ADD COLUMN {$field} {$definition}");
     }
@@ -725,8 +730,12 @@ function next_cycle_date(string $current, string $frequency, int $anchorDay, int
     return $first->setDate((int)$first->format('Y'), (int)$first->format('n'), $day)->format('Y-m-d');
 }
 
-function invoice_rows(string $where = '', array $params = [], string $order = 'i.id DESC', int $limit = 100): array
+function invoice_rows(string $where = '', array $params = [], string $order = 'i.id DESC', int $limit = 100, bool $includeArchived = false): array
 {
+    if (!$includeArchived) {
+        $where = trim($where);
+        $where = $where === '' ? 'WHERE i.archived_at IS NULL' : $where . ' AND i.archived_at IS NULL';
+    }
     $sql = 'SELECT i.*, i.billing_name AS client_name, i.billing_phone AS client_phone,
             i.billing_email AS client_email, c.email AS account_email, r.frequency,
             COALESCE((SELECT SUM(p.amount_cents + p.discount_cents) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid_cents,
@@ -735,6 +744,47 @@ function invoice_rows(string $where = '', array $params = [], string $order = 'i
             LEFT JOIN recurrences r ON r.id = i.recurrence_id ' . $where .
             ' ORDER BY ' . $order . ' LIMIT ' . (int)$limit;
     return query_all($sql, $params);
+}
+
+function archive_invoice(int $invoiceId): void
+{
+    $invoice = query_one('SELECT i.id, i.archived_at, i.total_cents, COALESCE((SELECT SUM(p.amount_cents + p.discount_cents) FROM payments p WHERE p.invoice_id=i.id), 0) settled_cents FROM invoices i WHERE i.id=?', [$invoiceId]);
+    if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
+    if ($invoice['archived_at'] !== null) throw new InvalidArgumentException('This invoice is already archived.');
+    if ((int)$invoice['settled_cents'] >= (int)$invoice['total_cents']) throw new InvalidArgumentException('A fully paid invoice cannot be archived.');
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $now = date('Y-m-d H:i:s');
+        $pdo->prepare('UPDATE invoices SET archived_at=? WHERE id=?')->execute([$now, $invoiceId]);
+        $pdo->prepare("UPDATE email_deliveries SET auto_send=0, status='skipped', last_error='Invoice archived.', updated_at=? WHERE invoice_id=? AND status<>'sent'")
+            ->execute([$now, $invoiceId]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        $pdo->rollBack();
+        throw $error;
+    }
+}
+
+function restore_invoice(int $invoiceId): void
+{
+    $stmt = db()->prepare('UPDATE invoices SET archived_at=NULL WHERE id=? AND archived_at IS NOT NULL');
+    $stmt->execute([$invoiceId]);
+    if (!$stmt->rowCount()) {
+        if (!query_one('SELECT id FROM invoices WHERE id=?', [$invoiceId])) throw new InvalidArgumentException('Invoice not found.');
+        throw new InvalidArgumentException('This invoice is already active.');
+    }
+}
+
+function hard_delete_invoice(int $invoiceId, int $adminId): void
+{
+    $admin = query_one('SELECT role FROM admins WHERE id=?', [$adminId]);
+    if (!$admin || $admin['role'] !== 'super_admin') throw new RuntimeException('Only a Super Admin can permanently delete an invoice.');
+    $invoice = query_one('SELECT i.id, i.total_cents, COALESCE((SELECT SUM(p.amount_cents + p.discount_cents) FROM payments p WHERE p.invoice_id=i.id), 0) settled_cents FROM invoices i WHERE i.id=?', [$invoiceId]);
+    if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
+    if ((int)$invoice['settled_cents'] >= (int)$invoice['total_cents']) throw new InvalidArgumentException('A fully paid invoice cannot be permanently deleted.');
+    $stmt = db()->prepare('DELETE FROM invoices WHERE id=?');
+    $stmt->execute([$invoiceId]);
 }
 
 function invoice_recipient_email(array $invoice): string
@@ -751,7 +801,7 @@ function client_ledger_statement(int $clientId): array
     $client = query_one('SELECT * FROM clients WHERE id=?', [$clientId]);
     if (!$client) throw new InvalidArgumentException('Client not found.');
     $events = [];
-    foreach (query_all('SELECT id, number, issue_date, total_cents FROM invoices WHERE client_id=? ORDER BY issue_date, id', [$clientId]) as $invoice) {
+    foreach (query_all('SELECT id, number, issue_date, total_cents FROM invoices WHERE client_id=? AND archived_at IS NULL ORDER BY issue_date, id', [$clientId]) as $invoice) {
         $events[] = [
             'date' => $invoice['issue_date'], 'invoice_id' => (int)$invoice['id'], 'invoice_number' => $invoice['number'],
             'debit_cents' => (int)$invoice['total_cents'], 'credit_cents' => 0,
@@ -759,7 +809,7 @@ function client_ledger_statement(int $clientId): array
             'sort_order' => 0, 'source_id' => (int)$invoice['id'],
         ];
     }
-    foreach (query_all('SELECT p.id, p.paid_at, p.amount_cents, p.discount_cents, i.id invoice_id, i.number invoice_number FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE i.client_id=? ORDER BY p.paid_at, p.id', [$clientId]) as $payment) {
+    foreach (query_all('SELECT p.id, p.paid_at, p.amount_cents, p.discount_cents, i.id invoice_id, i.number invoice_number FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE i.client_id=? AND i.archived_at IS NULL ORDER BY p.paid_at, p.id', [$clientId]) as $payment) {
         $cash = (int)$payment['amount_cents'];
         $discount = (int)$payment['discount_cents'];
         $events[] = [
@@ -901,13 +951,15 @@ function parse_items(array $input, bool $allowInactiveServices = false): array
         $service = $serviceId ? ($services[$serviceId] ?? null) : null;
         if ($serviceId && !$service) throw new InvalidArgumentException('The selected service was not found.');
         $name = trim((string)$rawName);
+        $rawPrice = trim((string)($prices[$i] ?? ''));
+        if ($name === '' && !$service && $rawPrice === '') continue;
         if ($name === '' && $service) $name = $service['name'];
         if ($name === '' || mb_strlen($name) > 150) throw new InvalidArgumentException('Enter a name for each item.');
-        $quantity = filter_var($quantities[$i] ?? null, FILTER_VALIDATE_FLOAT);
+        $quantity = filter_var($quantities[$i] ?? null, FILTER_VALIDATE_INT);
         if ($quantity === false || $quantity <= 0 || $quantity > 100000) {
-            throw new InvalidArgumentException('Enter a valid quantity.');
+            throw new InvalidArgumentException('Enter a whole-number quantity.');
         }
-        $price = money_cents((string)($prices[$i] ?? ''));
+        $price = money_cents($rawPrice);
         $items[] = [
             'service_id' => $serviceId ?: null,
             'name' => $name,
@@ -917,7 +969,31 @@ function parse_items(array $input, bool $allowInactiveServices = false): array
             'total_cents' => (int)round($price * $quantity),
         ];
     }
+    if (!$items) throw new InvalidArgumentException('Add at least one service or custom item.');
     return $items;
+}
+
+function parse_initial_discount_rule(array $input, int $subtotalCents): array
+{
+    if (!isset($input['initial_discount_enabled'])) return [];
+    $mapped = [
+        'discount_enabled' => '1',
+        'discount_type' => (string)($input['initial_discount_type'] ?? ''),
+        'discount_value' => (string)($input['initial_discount_value'] ?? ''),
+        'discount_scope' => 'every_cycle',
+        'discount_note' => trim((string)($input['initial_discount_note'] ?? '')),
+    ];
+    try {
+        $rule = parse_recurrence_discount($mapped, $subtotalCents);
+    } catch (InvalidArgumentException $error) {
+        throw new InvalidArgumentException(str_replace(['recurring discount', 'Recurring discount'], ['initial discount', 'Initial discount'], $error->getMessage()));
+    }
+    if ($rule['note'] === '') {
+        $rule['note'] = $rule['type'] === 'percent'
+            ? rtrim(rtrim(number_format($rule['value'] / 100, 2, '.', ''), '0'), '.') . '% Initial Discount'
+            : 'Initial Discount';
+    }
+    return $rule;
 }
 
 function parse_recurrence_discount(array $input, int $subtotalCents): array
@@ -1064,6 +1140,8 @@ function create_invoice(array $input): int
     $items = parse_items($input);
     $subtotal = array_sum(array_column($items, 'total_cents'));
     $discountRule = $type === 'recurring' ? parse_recurrence_discount($input, $subtotal) : [];
+    $initialDiscountRule = parse_initial_discount_rule($input, $subtotal);
+    $invoiceDiscountRule = $initialDiscountRule ?: $discountRule;
     $notes = mb_substr(trim((string)($input['notes'] ?? '')), 0, 2000);
     $paymentMethodId = selected_payment_method_id($input);
     $companyName = trim((string)($input['company_name'] ?? ''));
@@ -1088,8 +1166,8 @@ function create_invoice(array $input): int
                 $itemStmt->execute([$recurrenceId, $item['service_id'], $item['name'], $item['description'], $item['quantity'], $item['unit_price_cents']]);
             }
         }
-        $id = insert_invoice($pdo, $clientId, $items, $issueDate, $dueDate, $notes, $billing, $recurrenceId, $paymentMethodId, $discountRule);
-        if ($recurrenceId !== null && ($discountRule['type'] ?? 'none') !== 'none') advance_recurrence_discount($pdo, $recurrenceId, $discountRule);
+        $id = insert_invoice($pdo, $clientId, $items, $issueDate, $dueDate, $notes, $billing, $recurrenceId, $paymentMethodId, $invoiceDiscountRule);
+        if ($recurrenceId !== null && !$initialDiscountRule && ($discountRule['type'] ?? 'none') !== 'none') advance_recurrence_discount($pdo, $recurrenceId, $discountRule);
         queue_invoice_email($pdo, $id, (string)$billing['email']);
         $pdo->commit();
         return $id;
@@ -1118,7 +1196,7 @@ function edit_invoice(int $invoiceId, array $input): void
     $pdo = db();
     $pdo->beginTransaction();
     try {
-        $invoice = query_one('SELECT i.id, i.total_cents, i.payment_method_id, i.invoice_discount_type, i.invoice_discount_value, i.invoice_discount_label, COALESCE(SUM(p.amount_cents + p.discount_cents), 0) AS paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? GROUP BY i.id', [$invoiceId]);
+        $invoice = query_one('SELECT i.id, i.total_cents, i.payment_method_id, i.invoice_discount_type, i.invoice_discount_value, i.invoice_discount_label, COALESCE(SUM(p.amount_cents + p.discount_cents), 0) AS paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? AND i.archived_at IS NULL GROUP BY i.id', [$invoiceId]);
         if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
         $discount = parse_invoice_discount($input, $subtotal);
         $total = $subtotal - $discount['cents'];
@@ -1149,7 +1227,7 @@ function collect_payment(int $invoiceId, string $amount, string $method, string 
     $paidAt = valid_date($paidAt);
     $pdo->beginTransaction();
     try {
-        $invoice = query_one('SELECT i.total_cents, COALESCE(SUM(p.amount_cents + p.discount_cents),0) paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? GROUP BY i.id', [$invoiceId]);
+        $invoice = query_one('SELECT i.total_cents, COALESCE(SUM(p.amount_cents + p.discount_cents),0) paid_cents FROM invoices i LEFT JOIN payments p ON p.invoice_id = i.id WHERE i.id = ? AND i.archived_at IS NULL GROUP BY i.id', [$invoiceId]);
         if (!$invoice) throw new InvalidArgumentException('Invoice not found.');
         $remaining = (int)$invoice['total_cents'] - (int)$invoice['paid_cents'];
         if ($cents > $remaining) throw new InvalidArgumentException('The collection amount cannot exceed the balance due.');

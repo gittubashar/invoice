@@ -6,9 +6,9 @@ unlink($path);
 putenv('INVOICE_DB_PATH=' . $path);
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $fixturePage = $argv[1] ?? 'payment-methods';
-$_GET['page'] = in_array($fixturePage, ['collections-unselected', 'collections-search'], true) ? 'collections' : (in_array($fixturePage, ['invoice-identity-on', 'invoice-identity-off', 'invoice-collection'], true) ? 'invoice' : ($fixturePage === 'edit-discount' ? 'edit' : $fixturePage));
+$_GET['page'] = in_array($fixturePage, ['collections-unselected', 'collections-search'], true) ? 'collections' : (in_array($fixturePage, ['invoice-identity-on', 'invoice-identity-off', 'invoice-collection'], true) ? 'invoice' : ($fixturePage === 'edit-discount' ? 'edit' : ($fixturePage === 'invoice-control-archived' ? 'invoice-control' : $fixturePage)));
 if ($_GET['page'] === 'clients') $_GET['add'] = 1;
-if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard', 'collections', 'client', 'client-ledger', 'receipt', 'new-prefill', 'invoice', 'invoices', 'recurring', 'edit', 'clients'], true)) {
+if (in_array($_GET['page'], ['dashboard', 'invoice-dashboard', 'collections', 'client', 'client-ledger', 'receipt', 'new-prefill', 'invoice', 'invoices', 'invoice-control', 'recurring', 'edit', 'clients'], true)) {
     require_once dirname(__DIR__) . '/db.php';
 }
 if ($_GET['page'] === 'clients') create_client_account(['client_name'=>'List Client','company_name'=>'List Co','client_phone'=>'01911112222','client_email'=>'list@example.test']);
@@ -18,6 +18,21 @@ if ($_GET['page'] === 'invoices') {
         'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Mail test'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['100'],
     ]);
     $_GET['q'] = 'purple';
+}
+if ($_GET['page'] === 'invoice-control') {
+    $controlInvoiceId = create_invoice([
+        'client_name'=>'Control Client','client_phone'=>'01487654321','client_email'=>'control@example.test','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Control invoice'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['500'],
+    ]);
+    $paidControlInvoiceId = create_invoice([
+        'client_name'=>'Paid Control Client','client_phone'=>'01487654322','client_email'=>'paid-control@example.test','invoice_type'=>'one_time',
+        'issue_date'=>date('Y-m-d'),'due_date'=>add_days(date('Y-m-d'),7),'item_service_id'=>[''],'item_name'=>['Paid control invoice'],'item_description'=>[''],'item_qty'=>['1'],'item_price'=>['300'],
+    ]);
+    collect_payment($paidControlInvoiceId, '300', 'cash', 'CONTROL-PAID', '', date('Y-m-d'));
+    if ($fixturePage === 'invoice-control-archived') {
+        archive_invoice($controlInvoiceId);
+        $_GET['view'] = 'archived';
+    }
 }
 if ($fixturePage === 'edit-discount') {
     $_GET['id'] = create_invoice([
@@ -102,8 +117,15 @@ if (str_contains($html, 'Simple billing, clear accounts') || str_contains($html,
 if ($_GET['page'] === 'payment-methods' && (!str_contains($html, 'name="qr_file"') || !str_contains($html, 'name="account_number"'))) throw new RuntimeException('Payment method form did not render');
 if ($_GET['page'] === 'new' && !str_contains($html, 'name="payment_method_id"')) throw new RuntimeException('Invoice payment method selector did not render');
 if ($_GET['page'] === 'new' && (!str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_type"') || !str_contains($html, 'name="discount_scope"') || !str_contains($html, 'id="summary-discount"'))) throw new RuntimeException('Recurring invoice discount controls did not render');
-if ($fixturePage === 'edit-discount' && (!str_contains($html, 'Invoice Discount') || !str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_value"') || !str_contains($html, 'Saving makes the updated invoice ready to send again'))) throw new RuntimeException('Existing invoice discount controls did not render');
+if ($_GET['page'] === 'new' && (!str_contains($html, 'class="line-item invoice-entry-row"') || !str_contains($html, 'class="item-search"') || !str_contains($html, 'class="item-line-total"') || !str_contains($html, 'id="service-catalog"') || !str_contains($html, 'name="initial_discount_enabled"') || !str_contains($html, 'name="initial_discount_value"') || substr_count($html, 'class="line-item invoice-entry-row"') < 4)) throw new RuntimeException('Invoice-style ruled service entry or Initial Discount controls did not render');
+if ($fixturePage === 'edit-discount' && (!str_contains($html, 'Invoice Discount') || !str_contains($html, 'name="discount_enabled"') || !str_contains($html, 'name="discount_value"') || !str_contains($html, 'class="item-qty" required min="1" step="1" value="1"') || str_contains($html, 'value="1.0000"') || !str_contains($html, 'Saving makes the updated invoice ready to send again'))) throw new RuntimeException('Existing invoice discount or whole-number quantity controls did not render');
 if ($_GET['page'] === 'invoices' && (!str_contains($html, 'class="row-mail"') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, 'name="action" value="send_invoice_reminder"') || !str_contains($html, '> Send Reminder</button>') || !str_contains($html, 'name="return_q" value="purple"'))) throw new RuntimeException('Invoice list mail actions did not render');
+if ($_GET['page'] === 'invoice-control') {
+    $expectedLifecycleAction = $fixturePage === 'invoice-control-archived' ? 'restore_invoice' : 'archive_invoice';
+    $expectedCount = $fixturePage === 'invoice-control-archived' ? 'Archived (1)' : 'Outstanding (1)';
+    if (!str_contains($html, 'Invoice Control') || !str_contains($html, 'name="action" value="' . $expectedLifecycleAction . '"') || !str_contains($html, 'name="action" value="hard_delete_invoice"') || !str_contains($html, 'Super Admin · Hard Delete enabled') || !str_contains($html, $expectedCount)) throw new RuntimeException('Invoice Control lifecycle actions or Super Admin access did not render');
+}
+if ($_GET['page'] === 'invoice-control' && str_contains($html, 'Paid Control Client')) throw new RuntimeException('Fully paid invoices must not render in Invoice Control');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"') || !str_contains($html, '>Profile Edit</a>') || !str_contains($html, '>Ledger</a>') || !str_contains($html, 'page=client-ledger&amp;id='))) throw new RuntimeException('Client creation form, profile edit, or ledger action did not render');
 if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, '> Send Reminder</button>') || !str_contains($html, 'name="return_page" value="client"') || !str_contains($html, 'name="return_client_id" value="' . (int)$_GET['id'] . '"'))) throw new RuntimeException('Client update/delete or invoice mail controls did not render');
 if ($_GET['page'] === 'collections') {
@@ -127,7 +149,8 @@ if ($fixturePage === 'invoice-identity-off' && (str_contains($html, 'class="pape
 if ($fixturePage === 'invoice-identity-on' && (!str_contains($html, 'class="paper-brand"') || !str_contains($html, 'class="paper-slogan"'))) throw new RuntimeException('Enabled invoice title or slogan did not render');
 if ($fixturePage === 'invoice-collection' && (!str_contains($html, 'class="paper-collection-history"') || !str_contains($html, 'Collection History') || !str_contains($html, 'BDT 350') || !str_contains($html, '> Send Reminder</button>'))) throw new RuntimeException('Invoice collection history or reminder action did not render');
 $modulePages = [
-    'invoice-dashboard' => ['Invoice', 'Create Invoice', 'Recurring Billing'],
+    'invoice-dashboard' => ['Invoice', 'Create Invoice', 'Recurring Billing', 'Invoice Control'],
+    'invoice-control' => ['Invoice', 'Invoice Control'],
     'clients' => ['Clients', 'Client Ledger'],
     'services' => ['Services', 'Service Catalog'],
     'payment-methods' => ['Payment Methods'],

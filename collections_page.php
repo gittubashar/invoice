@@ -15,7 +15,7 @@ $selectedInvoice = $selectedId && $selectedClientId ? (invoice_rows('WHERE i.id=
 if ($selectedInvoice && (int)$selectedInvoice['paid_cents'] >= (int)$selectedInvoice['total_cents']) $selectedInvoice = null;
 $oldCollection = $_SESSION['old_collection'] ?? [];
 unset($_SESSION['old_collection']);
-$recentCollections = query_all('SELECT p.*, i.number, i.billing_name FROM payments p JOIN invoices i ON i.id=p.invoice_id ORDER BY p.id DESC LIMIT 50');
+$recentCollections = query_all('SELECT p.*, i.number, i.billing_name FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE i.archived_at IS NULL ORDER BY p.id DESC LIMIT 50');
 $methodLabels = ['cash'=>'Cash','bank'=>'Bank Transfer','bkash'=>'bKash','nagad'=>'Nagad','card'=>'Card','other'=>'Other'];
 
 begin_page('Invoice Collections', 'collections', 'Find a client, select invoices, and record partial or full payments.');

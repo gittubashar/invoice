@@ -195,7 +195,7 @@ function process_invoice_email_queue(int $limit = 10): array
     $limit = max(1, min(50, $limit));
     db()->prepare("UPDATE email_deliveries SET status='failed', last_error='Delivery process interrupted; queued for retry.', next_attempt_at=?, updated_at=? WHERE status='sending' AND updated_at < ?")
         ->execute([date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), date('Y-m-d H:i:s', strtotime('-15 minutes'))]);
-    $deliveries = query_all("SELECT * FROM email_deliveries WHERE auto_send=1 AND status IN ('pending','failed') AND attempts < 3 AND next_attempt_at <= ? ORDER BY id LIMIT {$limit}", [date('Y-m-d H:i:s')]);
+    $deliveries = query_all("SELECT d.* FROM email_deliveries d JOIN invoices i ON i.id=d.invoice_id WHERE i.archived_at IS NULL AND d.auto_send=1 AND d.status IN ('pending','failed') AND d.attempts < 3 AND d.next_attempt_at <= ? ORDER BY d.id LIMIT {$limit}", [date('Y-m-d H:i:s')]);
     $result = ['sent' => 0, 'failed' => 0, 'pending' => 0, 'skipped' => 0];
     foreach ($deliveries as $delivery) {
         $status = deliver_invoice_email($delivery)['status'];

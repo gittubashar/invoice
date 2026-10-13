@@ -339,22 +339,113 @@
   const discountFields = form.querySelector('[data-discount-fields]');
   const discountScope = form.querySelector('[data-discount-scope]');
   const discountCycles = form.querySelector('[data-discount-cycles]');
+  const initialDiscountEnabled = form.querySelector('[data-initial-discount-enabled]');
+  const initialDiscountFields = form.querySelector('[data-initial-discount-fields]');
+  const catalogNode = document.getElementById('service-catalog');
+  let serviceCatalog = [];
+  try {
+    serviceCatalog = catalogNode ? JSON.parse(catalogNode.textContent) : [];
+  } catch (error) {
+    serviceCatalog = [];
+  }
+
+  const closeServiceSuggestions = except => {
+    itemContainer.querySelectorAll('.invoice-service-suggestions').forEach(list => {
+      if (list !== except) {
+        list.hidden = true;
+        list.replaceChildren();
+      }
+    });
+  };
+
+  const applyService = (item, service) => {
+    item.querySelector('.item-search').value = service.name || '';
+    item.querySelector('.service-id').value = service.id || '';
+    item.querySelector('.item-name').value = service.name || '';
+    item.querySelector('.item-description').value = service.description || '';
+    item.querySelector('.item-price').value = service.price || '';
+    closeServiceSuggestions();
+    refresh();
+    item.querySelector('.item-qty').focus();
+    item.querySelector('.item-qty').select();
+  };
+
+  const renderServiceSuggestions = input => {
+    const item = input.closest('.line-item');
+    const list = item?.querySelector('.invoice-service-suggestions');
+    if (!item || !list) return;
+    const query = input.value.trim().toLocaleLowerCase();
+    closeServiceSuggestions(list);
+    list.replaceChildren();
+    if (!query) {
+      list.hidden = true;
+      return;
+    }
+    const matches = serviceCatalog.filter(service => `${service.name} ${service.description || ''}`.toLocaleLowerCase().includes(query)).slice(0, 6);
+    matches.forEach((service, index) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = `invoice-service-option${index === 0 ? ' active' : ''}`;
+      option.dataset.serviceId = String(service.id);
+      const copy = document.createElement('span');
+      const name = document.createElement('strong');
+      const description = document.createElement('small');
+      const price = document.createElement('b');
+      name.textContent = service.name;
+      description.textContent = service.description || 'Saved service';
+      price.textContent = `BDT ${currency.format(parseFloat(service.price) || 0)}`;
+      copy.append(name, description);
+      option.append(copy, price);
+      list.append(option);
+    });
+    if (!matches.length) {
+      const custom = document.createElement('div');
+      custom.className = 'invoice-service-custom';
+      custom.textContent = `Press Enter to use “${input.value.trim()}” as a custom description.`;
+      list.append(custom);
+    }
+    list.hidden = false;
+  };
+
+  const appendInvoiceLine = () => {
+    if (itemContainer.querySelectorAll('.line-item').length >= 30) return null;
+    itemContainer.append(template.content.cloneNode(true));
+    refresh();
+    return itemContainer.lastElementChild;
+  };
+
+  const focusNextInvoiceLine = item => {
+    const rows = [...itemContainer.querySelectorAll('.line-item')];
+    const index = rows.indexOf(item);
+    const next = rows[index + 1] || appendInvoiceLine();
+    next?.querySelector('.item-search, .service-select')?.focus();
+  };
 
   const refresh = () => {
     const items = [...itemContainer.querySelectorAll('.line-item')];
     let total = 0;
+    let filledItems = 0;
     items.forEach((item, index) => {
-      item.querySelector('.item-index').textContent = `Item ${index + 1}`;
-      total += (parseFloat(item.querySelector('.item-qty').value) || 0) *
-        (parseFloat(item.querySelector('.item-price').value) || 0);
+      item.querySelector('.item-index').textContent = item.classList.contains('invoice-entry-row') ? String(index + 1) : `Item ${index + 1}`;
+      const qty = parseFloat(item.querySelector('.item-qty').value) || 0;
+      const price = parseFloat(item.querySelector('.item-price').value) || 0;
+      const lineTotal = qty * price;
+      const hasItem = Boolean(item.querySelector('.item-name')?.value.trim() || item.querySelector('.item-search')?.value.trim());
+      if (hasItem) filledItems += 1;
+      total += lineTotal;
+      const lineTotalNode = item.querySelector('.item-line-total');
+      if (lineTotalNode) lineTotalNode.textContent = `BDT ${currency.format(lineTotal)}`;
     });
-    document.getElementById('summary-count').textContent = items.length;
+    document.getElementById('summary-count').textContent = filledItems;
     const recurring = form.elements.invoice_type.value === 'recurring';
     const editing = form.elements.action.value === 'edit_invoice';
-    const discountActive = (recurring || editing) && Boolean(discountEnabled?.checked);
-    const rawDiscount = parseFloat(form.elements.discount_value?.value) || 0;
+    const initialDiscountActive = !editing && Boolean(initialDiscountEnabled?.checked);
+    const recurringDiscountActive = (recurring || editing) && Boolean(discountEnabled?.checked);
+    const discountActive = initialDiscountActive || recurringDiscountActive;
+    const discountType = initialDiscountActive ? form.elements.initial_discount_type?.value : form.elements.discount_type?.value;
+    const rawDiscount = parseFloat(initialDiscountActive ? form.elements.initial_discount_value?.value : form.elements.discount_value?.value) || 0;
     const discount = discountActive
-      ? Math.min(total, form.elements.discount_type?.value === 'percent' ? total * Math.min(rawDiscount, 100) / 100 : rawDiscount)
+      ? Math.min(total, discountType === 'percent' ? total * Math.min(rawDiscount, 100) / 100 : rawDiscount)
       : 0;
     if (document.getElementById('summary-subtotal')) document.getElementById('summary-subtotal').textContent = `BDT ${currency.format(total)}`;
     if (document.getElementById('summary-discount')) document.getElementById('summary-discount').textContent = `BDT ${currency.format(discount)}`;
@@ -363,18 +454,24 @@
     document.querySelectorAll('.recurring-field').forEach(el => {
       el.hidden = !recurring;
     });
-    if (discountFields) discountFields.hidden = !discountActive;
-    if (discountCycles) discountCycles.hidden = !discountActive || discountScope?.value !== 'limited';
+    if (discountFields) discountFields.hidden = !recurringDiscountActive;
+    if (discountCycles) discountCycles.hidden = !recurringDiscountActive || discountScope?.value !== 'limited';
+    if (initialDiscountFields) initialDiscountFields.hidden = !initialDiscountActive;
   };
 
   document.getElementById('add-item')?.addEventListener('click', () => {
-    if (itemContainer.querySelectorAll('.line-item').length >= 30) return;
-    itemContainer.append(template.content.cloneNode(true));
-    refresh();
-    itemContainer.lastElementChild.querySelector('.service-select')?.focus();
+    const item = appendInvoiceLine();
+    item?.querySelector('.item-search, .service-select')?.focus();
   });
 
   itemContainer.addEventListener('click', event => {
+    const serviceOption = event.target.closest('.invoice-service-option');
+    if (serviceOption) {
+      const item = serviceOption.closest('.line-item');
+      const service = serviceCatalog.find(entry => String(entry.id) === serviceOption.dataset.serviceId);
+      if (item && service) applyService(item, service);
+      return;
+    }
     if (!event.target.closest('.remove-item')) return;
     if (itemContainer.querySelectorAll('.line-item').length <= 1) return;
     event.target.closest('.line-item').remove();
@@ -392,10 +489,80 @@
     }
     refresh();
   });
-  itemContainer.addEventListener('input', refresh);
+  itemContainer.addEventListener('input', event => {
+    if (event.target.matches('.item-search')) {
+      const item = event.target.closest('.line-item');
+      const hadCatalogService = item.querySelector('.service-id').value !== '';
+      item.querySelector('.service-id').value = '';
+      item.querySelector('.item-name').value = event.target.value.trim();
+      item.querySelector('.item-description').value = '';
+      if (hadCatalogService) item.querySelector('.item-price').value = '';
+      renderServiceSuggestions(event.target);
+    }
+    refresh();
+  });
+  itemContainer.addEventListener('focusin', event => {
+    if (event.target.matches('.item-search') && event.target.value.trim()) renderServiceSuggestions(event.target);
+  });
+  itemContainer.addEventListener('keydown', event => {
+    const item = event.target.closest('.line-item');
+    if (!item) return;
+    if (event.target.matches('.item-search') && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      const options = [...item.querySelectorAll('.invoice-service-option')];
+      if (!options.length) return;
+      event.preventDefault();
+      const current = options.findIndex(option => option.classList.contains('active'));
+      const next = event.key === 'ArrowDown'
+        ? (current + 1) % options.length
+        : (current <= 0 ? options.length - 1 : current - 1);
+      options.forEach((option, index) => option.classList.toggle('active', index === next));
+      options[next].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (event.key !== 'Enter') return;
+    if (event.target.matches('.item-search')) {
+      event.preventDefault();
+      const list = item.querySelector('.invoice-service-suggestions');
+      const selected = list?.querySelector('.invoice-service-option.active') || list?.querySelector('.invoice-service-option');
+      if (selected) {
+        const service = serviceCatalog.find(entry => String(entry.id) === selected.dataset.serviceId);
+        if (service) applyService(item, service);
+      } else if (event.target.value.trim()) {
+        item.querySelector('.service-id').value = '';
+        item.querySelector('.item-name').value = event.target.value.trim();
+        item.querySelector('.item-description').value = '';
+        closeServiceSuggestions();
+        item.querySelector('.item-qty').focus();
+        item.querySelector('.item-qty').select();
+      }
+      return;
+    }
+    if (event.target.matches('.item-qty')) {
+      event.preventDefault();
+      if (item.querySelector('.item-price').value !== '') focusNextInvoiceLine(item);
+      else item.querySelector('.item-price').focus();
+      return;
+    }
+    if (event.target.matches('.item-price')) {
+      event.preventDefault();
+      focusNextInvoiceLine(item);
+    }
+  });
   form.querySelectorAll('input[name="invoice_type"]').forEach(input => input.addEventListener('change', refresh));
   discountEnabled?.addEventListener('change', refresh);
   discountFields?.addEventListener('input', refresh);
   discountFields?.addEventListener('change', refresh);
+  initialDiscountEnabled?.addEventListener('change', refresh);
+  initialDiscountFields?.addEventListener('input', refresh);
+  initialDiscountFields?.addEventListener('change', refresh);
+  document.addEventListener('click', event => {
+    if (!event.target.closest('.invoice-service-search')) closeServiceSuggestions();
+  });
+  form.addEventListener('submit', () => {
+    itemContainer.querySelectorAll('.invoice-entry-row').forEach(item => {
+      const search = item.querySelector('.item-search');
+      if (search && !item.querySelector('.item-name').value.trim()) item.querySelector('.item-name').value = search.value.trim();
+    });
+  });
   refresh();
 })();
