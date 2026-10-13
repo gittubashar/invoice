@@ -12,6 +12,7 @@ require dirname(__DIR__) . '/media.php';
 require dirname(__DIR__) . '/print_invoice.php';
 require dirname(__DIR__) . '/pdf_invoice.php';
 require dirname(__DIR__) . '/client_ledger_pdf.php';
+require dirname(__DIR__) . '/client_import.php';
 
 function e(mixed $value): string { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function url(string $page, array $params = []): string { return 'index.php?' . http_build_query(['page' => $page] + $params); }
@@ -22,6 +23,24 @@ function status_label(string $value): string { return ['paid' => 'Paid', 'partia
 function expect(bool $condition, string $message): void
 {
     if (!$condition) throw new RuntimeException($message);
+}
+
+function test_zip_archive(array $files): string
+{
+    $body = '';
+    $directory = '';
+    foreach ($files as $name => $contents) {
+        $name = (string)$name;
+        $contents = (string)$contents;
+        $compressed = gzdeflate($contents);
+        if ($compressed === false) throw new RuntimeException('Test ZIP compression failed');
+        $crc = crc32($contents);
+        $offset = strlen($body);
+        $body .= pack('VvvvvvVVVvv', 0x04034b50, 20, 0, 8, 0, 0, $crc, strlen($compressed), strlen($contents), strlen($name), 0) . $name . $compressed;
+        $directory .= pack('VvvvvvvVVVvvvvvVV', 0x02014b50, 20, 20, 0, 8, 0, 0, $crc, strlen($compressed), strlen($contents), strlen($name), 0, 0, 0, 0, 0, $offset) . $name;
+    }
+    $count = count($files);
+    return $body . $directory . pack('VvvvvVVv', 0x06054b50, 0, 0, $count, $count, strlen($directory), strlen($body), 0);
 }
 
 try {
@@ -196,6 +215,30 @@ try {
     update_client_account($manualClientId, ['client_name' => 'Updated Manual Client', 'company_name' => 'Updated Co', 'client_address' => 'Chattogram', 'client_phone' => '01812345679', 'client_email' => 'updated-manual@example.test']);
     $updatedManualClient = query_one('SELECT * FROM clients WHERE id=?', [$manualClientId]);
     expect($updatedManualClient['name'] === 'Updated Manual Client' && $updatedManualClient['phone'] === '01812345679' && $updatedManualClient['address'] === 'Chattogram', 'Client update must persist all editable fields');
+    $importRows = [
+        ['Client Name', 'Mobile Number', 'Email', 'Company Name', 'Address'],
+        ['Bulk Client One', '01311112222', 'bulk-one@example.test', 'Bulk One Ltd', 'Dhaka'],
+        ['Invalid Client', '123', 'invalid@example.test', '', ''],
+        ['Bulk Client Two', '+8801511112222', 'bulk-two@example.test', '', 'Chattogram'],
+    ];
+    $importResult = import_clients_from_rows($importRows, 'skip');
+    expect($importResult['created'] === 2 && $importResult['failed'] === 1 && $importResult['processed'] === 3, 'Client bulk import must continue after an invalid row and report its result');
+    $skipResult = import_clients_from_rows([$importRows[0], $importRows[1]], 'skip');
+    expect($skipResult['skipped'] === 1 && $skipResult['failed'] === 0, 'Skip mode must preserve an existing client');
+    $updateResult = import_clients_from_rows([$importRows[0], ['Updated Bulk Client', '01311112222', '', 'Updated Bulk Ltd', '']], 'update');
+    $updatedBulkClient = query_one('SELECT * FROM clients WHERE phone=?', ['01311112222']);
+    expect($updateResult['updated'] === 1 && $updatedBulkClient['name'] === 'Updated Bulk Client' && $updatedBulkClient['company_name'] === 'Updated Bulk Ltd' && $updatedBulkClient['email'] === 'bulk-one@example.test', 'Update mode must update matched clients and preserve blank optional values');
+    $csvPath = tempnam(sys_get_temp_dir(), 'client-import-csv-');
+    if ($csvPath === false) throw new RuntimeException('CSV test path unavailable');
+    file_put_contents($csvPath, "Client Name,Mobile Number,Email,Company Name,Address\nCSV Client,01611112222,csv@example.test,CSV Ltd,Dhaka\n");
+    $csvRows = read_client_import_file(['error' => UPLOAD_ERR_OK, 'size' => filesize($csvPath), 'tmp_name' => $csvPath, 'name' => 'clients.csv']);
+    expect(($csvRows[1][0] ?? '') === 'CSV Client' && ($csvRows[1][1] ?? '') === '01611112222', 'CSV client import must read the template columns');
+    $xlsxPath = tempnam(sys_get_temp_dir(), 'client-import-xlsx-');
+    if ($xlsxPath === false) throw new RuntimeException('XLSX test path unavailable');
+    $sheetXml = '<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Client Name</t></is></c><c r="B1" t="inlineStr"><is><t>Mobile Number</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>XLSX Client</t></is></c><c r="B2" t="inlineStr"><is><t>01911112223</t></is></c></row></sheetData></worksheet>';
+    file_put_contents($xlsxPath, test_zip_archive(['xl/worksheets/sheet1.xml' => $sheetXml]));
+    $xlsxRows = read_client_import_file(['error' => UPLOAD_ERR_OK, 'size' => filesize($xlsxPath), 'tmp_name' => $xlsxPath, 'name' => 'clients.xlsx']);
+    expect(($xlsxRows[1][0] ?? '') === 'XLSX Client' && ($xlsxRows[1][1] ?? '') === '01911112223', 'XLSX client import must read inline worksheet values without requiring ZipArchive');
     delete_client_account($manualClientId);
     expect(query_one('SELECT id FROM clients WHERE id=?', [$manualClientId]) === false, 'Standalone client must be deletable');
     try {
@@ -223,6 +266,7 @@ try {
     expect(str_contains($collectionPrintHtml, 'Collection History') && str_contains($collectionPrintHtml, format_date($collectedPayments[0]['paid_at'])) && str_contains($collectionPrintHtml, format_money((int)$collectedPayments[0]['amount_cents'])), 'Print invoice must show each collection date and amount');
     $collectionPdfHtml = invoice_pdf_html($collectedInvoice, $collectedItems, invoice_payment_methods($collectedInvoice), $collectedPayments);
     expect(str_contains($collectionPdfHtml, 'Collection History') && str_contains($collectionPdfHtml, format_date($collectedPayments[0]['paid_at'])), 'PDF invoice must show collection history');
+    expect(str_contains($collectionPdfHtml, 'style="width:64%"') && str_contains($collectionPdfHtml, 'style="width:36%"') && str_contains($collectionPdfHtml, 'text-align:right;font-weight:bold;white-space:nowrap'), 'PDF totals box must be compact and right-align every amount');
     $printInvoice = invoice_rows('WHERE i.id=?', [$second])[0];
     $printItems = query_all('SELECT * FROM invoice_items WHERE invoice_id=?', [$second]);
     ob_start();
@@ -306,10 +350,10 @@ try {
     db();
     expect(query_one('SELECT password_hash FROM admins WHERE email=?', [DEFAULT_SUPER_ADMIN_EMAIL])['password_hash'] === $changedHash, 'One-time seed must preserve later password changes');
     expect(setting('site_title') === 'Test Billing' && setting('smtp_host') === 'smtp.example.test', 'Settings must survive database reopen');
-    echo "Smoke test passed: modules, invoice edits, billing cycles, multi-invoice collection, discounts, receipts, PDF, email queue, and recurring generation.\n";
+    echo "Smoke test passed: modules, client bulk import, invoice edits, billing cycles, multi-invoice collection, discounts, receipts, PDF, email queue, and recurring generation.\n";
 } finally {
     $pdo = null;
     close_db();
     if (isset($qrFullPath) && is_file($qrFullPath)) unlink($qrFullPath);
-    foreach ([$path, $path . '-wal', $path . '-shm', $keyPath] as $file) if (is_file($file)) unlink($file);
+    foreach ([$path, $path . '-wal', $path . '-shm', $keyPath, $csvPath ?? '', $xlsxPath ?? ''] as $file) if ($file !== '' && is_file($file)) unlink($file);
 }

@@ -365,6 +365,7 @@
     item.querySelector('.item-description').value = service.description || '';
     item.querySelector('.item-price').value = service.price || '';
     closeServiceSuggestions();
+    ensureTrailingInvoiceLine();
     refresh();
     item.querySelector('.item-qty').focus();
     item.querySelector('.item-qty').select();
@@ -412,6 +413,17 @@
     itemContainer.append(template.content.cloneNode(true));
     refresh();
     return itemContainer.lastElementChild;
+  };
+
+  const ensureTrailingInvoiceLine = () => {
+    let rows = [...itemContainer.querySelectorAll('.invoice-entry-row')];
+    if (!rows.length) return;
+    const isBlank = row => !row.querySelector('.item-search')?.value.trim() && !row.querySelector('.item-name')?.value.trim();
+    while (rows.length > 1 && isBlank(rows.at(-1)) && isBlank(rows.at(-2))) {
+      rows.at(-1).remove();
+      rows = [...itemContainer.querySelectorAll('.invoice-entry-row')];
+    }
+    if (rows.length < 30 && !isBlank(rows.at(-1))) appendInvoiceLine();
   };
 
   const focusNextInvoiceLine = item => {
@@ -475,6 +487,7 @@
     if (!event.target.closest('.remove-item')) return;
     if (itemContainer.querySelectorAll('.line-item').length <= 1) return;
     event.target.closest('.line-item').remove();
+    ensureTrailingInvoiceLine();
     refresh();
   });
 
@@ -498,6 +511,7 @@
       item.querySelector('.item-description').value = '';
       if (hadCatalogService) item.querySelector('.item-price').value = '';
       renderServiceSuggestions(event.target);
+      ensureTrailingInvoiceLine();
     }
     refresh();
   });
@@ -564,5 +578,6 @@
       if (search && !item.querySelector('.item-name').value.trim()) item.querySelector('.item-name').value = search.value.trim();
     });
   });
+  ensureTrailingInvoiceLine();
   refresh();
 })();

@@ -47,7 +47,7 @@ table{border-collapse:collapse;width:100%}
 .item-name{display:block;font-weight:bold}.item-description{display:block;margin-top:.5mm;color:#69849a;font-size:7pt;line-height:1.25}
 .totals-wrap{margin:1.5mm 0 2mm}.totals-wrap td{vertical-align:bottom}
 .thanks{color:#0d5489;font-size:10pt;font-style:italic}
-.totals{background:#eef8fd}.totals td{padding:1mm 2mm;border-bottom:0.2mm solid #b7d9e9;font-size:8pt}.totals td:last-child{text-align:right;font-weight:bold}
+.totals{width:100%;background:#eef8fd;table-layout:fixed}.totals td{padding:1mm 2mm;border-bottom:0.2mm solid #b7d9e9;font-size:8pt}.totals td:first-child{width:52%;text-align:left}.totals td:last-child{width:48%;text-align:right;font-weight:bold;white-space:nowrap}
 .totals .due-row td{background:#beece9;color:#123c52;font-size:9pt;font-weight:bold;border:0}
 .collection-history{background:#f4f9fc;border:0.2mm solid #c9dfea;border-radius:2mm;padding:1.5mm 2.5mm;margin:0 0 2mm;page-break-inside:avoid}.collection-history h2{font-size:8.5pt;color:#0d5489;margin-bottom:.7mm}.collection-history-table td{padding:.45mm 1mm;border-top:.15mm solid #d9e8ef;font-size:7.2pt}.collection-history-table td:last-child{text-align:right;font-weight:bold}.collection-history-table tr:first-child td{border-top:0}
 .payment-area{background:#edf7fd;padding:2mm 3mm;border-radius:2mm;margin-top:.5mm;page-break-inside:avoid}
@@ -100,7 +100,7 @@ table{border-collapse:collapse;width:100%}
     <tr class="<?= $index % 2 ? 'stripe' : '' ?>"><td class="num"><?= $index + 1 ?></td><td><div class="item-name"><?= e($item['name']) ?></div><?php if ($item['description'] !== ''): ?><div class="item-description"><?= e($item['description']) ?></div><?php endif; ?></td><td class="qty"><?= e(rtrim(rtrim(number_format((float)$item['quantity'], 2, '.', ''), '0'), '.')) ?></td><td class="money"><?= e(number_format((int)$item['unit_price_cents'] / 100, 2)) ?></td><td class="money"><?= e(number_format((int)$item['total_cents'] / 100, 2)) ?></td></tr>
 <?php endforeach; ?>
 </tbody></table>
-<table class="totals-wrap"><tr><td style="width:54%"><div class="thanks">Your trust is<br>our inspiration.</div></td><td style="width:46%">
+<table class="totals-wrap"><tr><td style="width:64%"><div class="thanks">Your trust is<br>our inspiration.</div></td><td style="width:36%">
     <table class="totals"><tr><td>Subtotal</td><td><?= e(format_money($subtotal)) ?></td></tr><?php if ($invoiceDiscount > 0): ?><tr><td><?= e($invoice['invoice_discount_label'] ?: 'Invoice Discount') ?></td><td>− <?= e(format_money($invoiceDiscount)) ?></td></tr><?php endif; ?><tr><td>Grand Total</td><td><?= e(format_money((int)$invoice['total_cents'])) ?></td></tr><tr><td>Paid</td><td><?= e(format_money($collected)) ?></td></tr><?php if ($collectionDiscount > 0): ?><tr><td>Collection Discount</td><td><?= e(format_money($collectionDiscount)) ?></td></tr><?php endif; ?><tr class="due-row"><td>Balance Due</td><td><?= e(format_money($due)) ?></td></tr></table>
 </td></tr></table>
 <?php if ($collections): ?><div class="collection-history"><h2>Collection History</h2><table class="collection-history-table"><?php foreach ($collections as $collection): ?><tr><td><?= e(format_date($collection['paid_at'])) ?></td><td><?= e(format_money((int)$collection['amount_cents'])) ?></td></tr><?php endforeach; ?></table></div><?php endif; ?>
