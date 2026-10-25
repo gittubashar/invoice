@@ -109,6 +109,9 @@ session_name('invoice_admin');
 session_id('invoice-page-' . bin2hex(random_bytes(8)));
 session_start();
 $_SESSION['admin_id'] = 1;
+if ($fixturePage === 'new-prefill') {
+    $_SESSION['old_invoice'] = ['client_name' => 'Stale Client', 'client_phone' => '01300000000', 'client_email' => 'stale@example.test', 'company_name' => 'Stale Company'];
+}
 ob_start();
 require dirname(__DIR__) . '/index.php';
 $html = (string)ob_get_clean();
@@ -128,7 +131,7 @@ if ($_GET['page'] === 'invoice-control') {
 if ($_GET['page'] === 'invoice-control' && str_contains($html, 'Paid Control Client')) throw new RuntimeException('Fully paid invoices must not render in Invoice Control');
 if ($_GET['page'] === 'clients' && (!str_contains($html, 'name="action" value="save_client"') || !str_contains($html, 'name="client_phone"') || !str_contains($html, 'name="client_address"') || !str_contains($html, '>Profile Edit</a>') || !str_contains($html, '>Ledger</a>') || !str_contains($html, 'page=client-ledger&amp;id=') || !str_contains($html, '> Bulk Upload</a>'))) throw new RuntimeException('Client creation form, bulk upload, profile edit, or ledger action did not render');
 if ($_GET['page'] === 'client-import' && (!str_contains($html, 'enctype="multipart/form-data"') || !str_contains($html, 'name="action" value="import_clients"') || !str_contains($html, 'name="client_file"') || !str_contains($html, 'value="skip" checked') || !str_contains($html, 'value="update"') || !str_contains($html, 'page=client-import-template'))) throw new RuntimeException('Client bulk upload form or template action did not render');
-if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, '> Send Reminder</button>') || !str_contains($html, 'name="return_page" value="client"') || !str_contains($html, 'name="return_client_id" value="' . (int)$_GET['id'] . '"'))) throw new RuntimeException('Client update/delete or invoice mail controls did not render');
+if ($_GET['page'] === 'client' && (!str_contains($html, 'name="action" value="update_client"') || !str_contains($html, 'name="action" value="delete_client"') || !str_contains($html, 'Editable Client') || !str_contains($html, '> Send Mail</button>') || !str_contains($html, '> Send Reminder</button>') || !str_contains($html, 'name="return_page" value="client"') || !str_contains($html, 'name="return_client_id" value="' . (int)$_GET['id'] . '"') || !str_contains($html, 'page=new&amp;client_id=' . (int)$_GET['id']))) throw new RuntimeException('Client update/delete, Create Invoice link, or invoice mail controls did not render');
 if ($_GET['page'] === 'collections') {
     if (!str_contains($html, 'name="q"') || !str_contains($html, 'Name, mobile number, or email') || !str_contains($html, 'data-collection-client-search') || !str_contains($html, 'data-search-url=')) throw new RuntimeException('Live client collection search did not render');
     if ($fixturePage === 'collections-unselected') {
@@ -143,7 +146,7 @@ if ($_GET['page'] === 'collections') {
         if ($invoicePosition === false || $formPosition === false || $formPosition < $invoicePosition) throw new RuntimeException('Collection form must render below client invoices');
     }
 }
-if ($_GET['page'] === 'new' && isset($_GET['client_id']) && !str_contains($html, 'Prefilled Client')) throw new RuntimeException('Client profile invoice prefill did not render');
+if ($_GET['page'] === 'new' && isset($_GET['client_id']) && (!str_contains($html, 'value="01987654321"') || !str_contains($html, 'value="prefill@example.test"') || !str_contains($html, 'value="Prefilled Client"') || !str_contains($html, 'value="Prefill Co"') || !str_contains($html, 'name="source_client_id" value="' . (int)$_GET['client_id'] . '"') || !str_contains($html, 'name="matched_client_id" value="' . (int)$_GET['client_id'] . '"') || !str_contains($html, 'Client information has been loaded automatically from the selected profile.') || str_contains($html, 'Stale Client'))) throw new RuntimeException('Client profile invoice fields were not populated from the selected client');
 if ($_GET['page'] === 'client-ledger' && (!str_contains($html, 'LEDGER HISTORY') || !str_contains($html, 'PDF Statement') || !str_contains($html, '<th>S.N.</th>') || !str_contains($html, '<th>Debit</th>') || !str_contains($html, '<th>Credit</th>') || !str_contains($html, 'Closing Balance'))) throw new RuntimeException('Client ledger statement did not render');
 if ($_GET['page'] === 'receipt' && !str_contains($html, 'MONEY RECEIPT')) throw new RuntimeException('Money receipt did not render');
 if ($fixturePage === 'invoice-identity-off' && (str_contains($html, 'class="paper-logo"') || str_contains($html, 'class="paper-brand"') || str_contains($html, 'class="paper-slogan"'))) throw new RuntimeException('Disabled invoice identity elements rendered');
